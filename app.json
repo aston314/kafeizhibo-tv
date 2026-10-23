@@ -1,0 +1,15 @@
+{
+  "productId": "sports-live-tv",
+  "displayName": "体育直播",
+  "applicationId": "cc.kafeizhibo.tv",
+  "versionName": "0.1.0",
+  "versionCode": 1,
+  "platform": "Android TV",
+  "minSdk": 23,
+  "abis": ["arm64-v8a", "armeabi-v7a", "x86_64"],
+  "upstream": "https://kafeizhibo.cc",
+  "doubaoUpstream": "https://www.doubaozhibo.com",
+  "playerAdapter": "webview-hls",
+  "memberFeatures": false,
+  "stage": "preview"
+}

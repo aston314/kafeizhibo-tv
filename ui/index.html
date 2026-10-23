@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#101417">
+  <title>体育直播</title>
+  <link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" class="icon-defs">
+    <defs>
+      <symbol id="icon-home" viewBox="0 0 24 24"><path d="M3 11 12 3.5 21 11v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" fill="currentColor"/></symbol>
+      <symbol id="icon-live" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.6" fill="currentColor"/><path d="M7.5 7.5a6.4 6.4 0 0 0 0 9M16.5 7.5a6.4 6.4 0 0 1 0 9M4.6 4.6a10.5 10.5 0 0 0 0 14.8M19.4 4.6a10.5 10.5 0 0 1 0 14.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="icon-calendar" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 10h16M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="icon-replay" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 8.3v7.4l6-3.7z" fill="currentColor"/></symbol>
+      <symbol id="icon-heart" viewBox="0 0 24 24"><path d="M12 20S4 15.2 4 9.7A4.1 4.1 0 0 1 12 7a4.1 4.1 0 0 1 8 2.7C20 15.2 12 20 12 20Z" fill="currentColor"/></symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></symbol>
+      <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M6 4.5h4v15H6zM14 4.5h4v15h-4z" fill="currentColor"/></symbol>
+      <symbol id="icon-back" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="icon-fullscreen" viewBox="0 0 24 24"><path d="M8 4H4v4M16 4h4v4M4 16v4h4M20 16v4h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="icon-exit-fullscreen" viewBox="0 0 24 24"><path d="M4 8h4V4M20 8h-4V4M8 20v-4H4M16 20v-4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    </defs>
+  </svg>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand"><span class="brand-mark">S</span><span>体育直播</span></div>
+      <nav class="nav-list">
+        <button class="nav-item is-active" data-page="home" data-focus="nav-home"><svg class="nav-icon"><use xlink:href="#icon-home"></use></svg><span>首页</span></button>
+        <button class="nav-item" data-page="live" data-focus="nav-live"><svg class="nav-icon"><use xlink:href="#icon-live"></use></svg><span>全部直播</span></button>
+        <button class="nav-item" data-page="schedule" data-focus="nav-schedule"><svg class="nav-icon"><use xlink:href="#icon-calendar"></use></svg><span>赛程</span></button>
+        <button class="nav-item" data-page="replay" data-focus="nav-replay"><svg class="nav-icon"><use xlink:href="#icon-replay"></use></svg><span>录像回放</span></button>
+        <button class="nav-item" data-page="support" data-focus="nav-support"><svg class="nav-icon"><use xlink:href="#icon-heart"></use></svg><span>打赏</span></button>
+      </nav>
+    </aside>
+    <main class="main-area">
+      <header class="topbar">
+        <h1 id="page-title">首页</h1>
+        <div id="category-slot" class="category-slot"></div>
+      </header>
+      <div id="page-content" class="page-content" aria-live="polite"></div>
+    </main>
+  </div>
+  <div id="room-layer" class="room-layer" hidden></div>
+  <div id="toast" class="toast" aria-live="polite"></div>
+  <script src="/ui/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+package kafzitv
+
+import "os"
+
+type Config struct {
+	ProductID      string `json:"productId"`
+	DisplayName    string `json:"displayName"`
+	ApplicationID  string `json:"applicationId"`
+	VersionName    string `json:"versionName"`
+	Upstream       string `json:"upstream"`
+	DoubaoUpstream string `json:"doubaoUpstream"`
+}
+
+func Load() Config {
+	return Config{ProductID: "sports-live-tv", DisplayName: "体育直播", ApplicationID: "cc.kafeizhibo.tv", VersionName: "0.1.0", Upstream: envOr("KAFEI_UPSTREAM", "https://kafeizhibo.cc"), DoubaoUpstream: envOr("DOUBAO_UPSTREAM", "https://www.doubaozhibo.com")}
+}
+
+func envOr(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}

@@ -1,0 +1,19 @@
+import groovy.json.JsonSlurper
+plugins { id "com.android.application" }
+def product = new JsonSlurper().parse(file("../../app.json"))
+android {
+    namespace product.applicationId
+    compileSdk 35
+    defaultConfig {
+        applicationId product.applicationId
+        minSdk product.minSdk
+        targetSdk 35
+        versionCode product.versionCode
+        versionName product.versionName
+        resValue "string", "app_name", product.displayName
+        ndk { abiFilters.addAll(product.abis) }
+    }
+    buildFeatures { buildConfig true }
+    buildTypes { debug { applicationIdSuffix ".debug"; versionNameSuffix "-debug" }; release { minifyEnabled false } }
+    packaging { jniLibs { useLegacyPackaging = true } }
+}

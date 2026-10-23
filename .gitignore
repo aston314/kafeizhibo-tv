@@ -1,0 +1,9 @@
+.DS_Store
+.playwright-cli/
+.gradle/
+build/
+android/app/build/
+android/app/src/main/jniLibs/
+*.apk
+*.aab
+artifacts/screenshots/归档.zip
