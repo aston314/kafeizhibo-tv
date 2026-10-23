@@ -28,6 +28,8 @@ type feedItem struct {
 	LeagueName     string      `json:"league_name,omitempty"`
 	HomeTeam       string      `json:"home_team,omitempty"`
 	AwayTeam       string      `json:"away_team,omitempty"`
+	HomeTeamLogo   string      `json:"home_team_logo,omitempty"`
+	AwayTeamLogo   string      `json:"away_team_logo,omitempty"`
 	HomeScore      interface{} `json:"home_score,omitempty"`
 	AwayScore      interface{} `json:"away_score,omitempty"`
 	Status         string      `json:"status"`
@@ -245,7 +247,29 @@ func (s *Server) fetchFeed(r *http.Request, source, view, category string, page,
 		result.State = sourceState{Status: "ok", Count: len(result.Items), Message: source + ": fixture"}
 		return result
 	}
-	body, stale, err := s.fetchSource(r.Context(), source, requestPath, query, cacheable)
+	feedCtx, cancelFeed := context.WithTimeout(r.Context(), s.feedTimeout)
+	defer cancelFeed()
+	var scheduleMetadata <-chan []feedItem
+	if source == "doubao" && (view == "home" || view == "live") {
+		metadata := make(chan []feedItem, 1)
+		scheduleMetadata = metadata
+		go func() {
+			ctx, cancel := context.WithTimeout(feedCtx, 3500*time.Millisecond)
+			defer cancel()
+			body, _, err := s.fetchSource(ctx, source, "/api/v1/home/schedules", doubaoLiveScheduleQuery(category), true)
+			if err != nil {
+				metadata <- nil
+				return
+			}
+			var envelope map[string]interface{}
+			if json.Unmarshal(body, &envelope) != nil || envelope["success"] == false {
+				metadata <- nil
+				return
+			}
+			metadata <- normalizeDoubaoSchedules(asMap(envelope["data"]))
+		}()
+	}
+	body, stale, err := s.fetchSource(feedCtx, source, requestPath, query, cacheable)
 	if err != nil {
 		result.State = sourceState{Status: "error", Message: source + ": " + err.Error()}
 		return result
@@ -260,6 +284,13 @@ func (s *Server) fetchFeed(r *http.Request, source, view, category string, page,
 		return result
 	}
 	result.Items, result.Total, result.HasMore, result.NextCursor = normalizeFeed(source, view, envelope)
+	if scheduleMetadata != nil {
+		select {
+		case schedules := <-scheduleMetadata:
+			enrichDoubaoRoomItems(result.Items, schedules)
+		case <-feedCtx.Done():
+		}
+	}
 	if source == "kafei" && (view == "home" || view == "live") {
 		total := len(result.Items)
 		result.Total = intPtr(total)
@@ -404,6 +435,10 @@ func normalizeKafeiItems(view string, rows []interface{}) []feedItem {
 		match := firstString(m, "match_id", "matchId", "id")
 		home := firstString(m, "home_team", "homeTeam")
 		away := firstString(m, "away_team", "awayTeam")
+		matchInfo := asMap(m["match_info"])
+		if matchInfo == nil {
+			matchInfo = asMap(m["matchInfo"])
+		}
 		league := firstString(m, "league_name", "league")
 		title := firstString(m, "title")
 		if title == "" {
@@ -416,7 +451,9 @@ func normalizeKafeiItems(view string, rows []interface{}) []feedItem {
 		items = append(items, feedItem{
 			ID: id, Source: "kafei", SourceLabel: "咖啡直播", Kind: kind,
 			RoomID: room, MatchID: match, Title: title, LeagueName: league,
-			HomeTeam: home, AwayTeam: away, HomeScore: value(m, "home_score", "homeScore"), AwayScore: value(m, "away_score", "awayScore"),
+			HomeTeamLogo: normalizedTeamLogo("https://kafeizhibo.cc", []map[string]interface{}{m, matchInfo}, "home_team_logo", "homeTeamLogo", "homeLogo"),
+			AwayTeamLogo: normalizedTeamLogo("https://kafeizhibo.cc", []map[string]interface{}{m, matchInfo}, "away_team_logo", "awayTeamLogo", "awayLogo"),
+			HomeTeam:     home, AwayTeam: away, HomeScore: value(m, "home_score", "homeScore"), AwayScore: value(m, "away_score", "awayScore"),
 			Status: normalizeKafeiStatus(firstString(m, "status")), StartTime: firstString(m, "start_time", "startTime", "match_time"),
 			Cover: absoluteURL("https://kafeizhibo.cc", firstString(m, "screenshot", "cover_image", "cover")), Heat: value(m, "heat", "popularity"),
 			SignalCount: asInt(value(m, "signal_count", "signalCount")), RecordingCount: asInt(value(m, "recording_count", "recordingCount")),
@@ -437,7 +474,7 @@ func normalizeDoubaoRooms(data map[string]interface{}) []feedItem {
 		item, ok := groups[matchID]
 		if !ok {
 			title := firstString(m, "title")
-			item = &feedItem{ID: matchID, Source: "doubao", SourceLabel: "豆包直播", Kind: "live", MatchID: matchID, Title: title, LeagueName: firstString(m, "league"), HomeTeam: teamFromTitle(title, true), AwayTeam: teamFromTitle(title, false), Status: normalizeDoubaoStatus(m["status"]), Cover: absoluteURL("https://www.doubaozhibo.com", firstString(m, "cover"))}
+			item = &feedItem{ID: matchID, Source: "doubao", SourceLabel: "豆包直播", Kind: "live", MatchID: matchID, Title: title, LeagueName: firstString(m, "league"), HomeTeam: teamFromTitle(title, true), AwayTeam: teamFromTitle(title, false), HomeTeamLogo: normalizedTeamLogo("https://www.doubaozhibo.com", []map[string]interface{}{m}, "homeLogo", "home_logo", "homeTeamLogo", "teamALogo"), AwayTeamLogo: normalizedTeamLogo("https://www.doubaozhibo.com", []map[string]interface{}{m}, "awayLogo", "away_logo", "awayTeamLogo", "teamBLogo"), Status: normalizeDoubaoStatus(m["status"]), Cover: absoluteURL("https://www.doubaozhibo.com", firstString(m, "cover"))}
 			groups[matchID] = item
 			order = append(order, matchID)
 		}
@@ -457,6 +494,57 @@ func normalizeDoubaoRooms(data map[string]interface{}) []feedItem {
 	return items
 }
 
+func doubaoLiveScheduleQuery(category string) url.Values {
+	query := url.Values{}
+	query.Set("date", time.Now().Format("2006-01-02"))
+	query.Set("days", "1")
+	query.Set("category", doubaoCategory(category))
+	query.Set("continuous", "true")
+	query.Set("pageSize", "20")
+	query.Set("q", "")
+	return query
+}
+
+func enrichDoubaoRoomItems(items, schedules []feedItem) {
+	byMatchID := make(map[string]feedItem, len(schedules))
+	for _, schedule := range schedules {
+		if schedule.MatchID != "" {
+			byMatchID[schedule.MatchID] = schedule
+		}
+	}
+	for index := range items {
+		schedule, ok := byMatchID[items[index].MatchID]
+		if !ok {
+			continue
+		}
+		item := &items[index]
+		if schedule.HomeTeam != "" {
+			item.HomeTeam = schedule.HomeTeam
+		}
+		if schedule.AwayTeam != "" {
+			item.AwayTeam = schedule.AwayTeam
+		}
+		if item.LeagueName == "" {
+			item.LeagueName = schedule.LeagueName
+		}
+		if item.HomeTeamLogo == "" {
+			item.HomeTeamLogo = schedule.HomeTeamLogo
+		}
+		if item.AwayTeamLogo == "" {
+			item.AwayTeamLogo = schedule.AwayTeamLogo
+		}
+		if item.HomeScore == nil {
+			item.HomeScore = schedule.HomeScore
+		}
+		if item.AwayScore == nil {
+			item.AwayScore = schedule.AwayScore
+		}
+		if item.StartTime == "" {
+			item.StartTime = schedule.StartTime
+		}
+	}
+}
+
 func normalizeDoubaoSchedules(data map[string]interface{}) []feedItem {
 	items := []feedItem{}
 	for _, raw := range asSlice(data["items"]) {
@@ -473,7 +561,7 @@ func normalizeDoubaoSchedules(data map[string]interface{}) []feedItem {
 		matchID := firstString(match, "id")
 		roomID := playIDFromURL(firstString(first, "url"))
 		home, away := firstString(match, "home", "teamA"), firstString(match, "away", "teamB")
-		items = append(items, feedItem{ID: matchID, Source: "doubao", SourceLabel: "豆包直播", Kind: "match", RoomID: roomID, MatchID: matchID, Title: firstString(first, "title") + titleFallback(firstString(match, "league"), home, away), LeagueName: firstString(match, "league"), HomeTeam: home, AwayTeam: away, HomeScore: value(match, "homeScore", "scoreA"), AwayScore: value(match, "awayScore", "scoreB"), Status: normalizeDoubaoStatus(match["status"]), StartTime: firstString(match, "matchTime"), Cover: absoluteURL("https://www.doubaozhibo.com", firstString(first, "cover")), SignalCount: len(rooms)})
+		items = append(items, feedItem{ID: matchID, Source: "doubao", SourceLabel: "豆包直播", Kind: "match", RoomID: roomID, MatchID: matchID, Title: firstString(first, "title") + titleFallback(firstString(match, "league"), home, away), LeagueName: firstString(match, "league"), HomeTeam: home, AwayTeam: away, HomeTeamLogo: normalizedTeamLogo("https://www.doubaozhibo.com", []map[string]interface{}{match}, "homeLogo", "home_logo", "homeTeamLogo", "teamALogo"), AwayTeamLogo: normalizedTeamLogo("https://www.doubaozhibo.com", []map[string]interface{}{match}, "awayLogo", "away_logo", "awayTeamLogo", "teamBLogo"), HomeScore: value(match, "homeScore", "scoreA"), AwayScore: value(match, "awayScore", "scoreB"), Status: normalizeDoubaoStatus(match["status"]), StartTime: firstString(match, "matchTime"), Cover: absoluteURL("https://www.doubaozhibo.com", firstString(first, "cover")), SignalCount: len(rooms)})
 		items[len(items)-1].Title = firstString(first, "title")
 		if items[len(items)-1].Title == "" {
 			items[len(items)-1].Title = strings.TrimSpace(firstString(match, "league") + " " + home + " VS " + away)
@@ -500,7 +588,7 @@ func normalizeDoubaoReplays(data map[string]interface{}) []feedItem {
 			replayID = id + "-1"
 		}
 		home, away := firstString(schedule, "teamA"), firstString(schedule, "teamB")
-		items = append(items, feedItem{ID: id, Source: "doubao", SourceLabel: "豆包直播", Kind: "replay", RoomID: replayID, ReplayID: replayID, MatchID: id, Title: firstString(m, "title"), LeagueName: firstString(schedule, "league"), HomeTeam: home, AwayTeam: away, HomeScore: value(schedule, "scoreA"), AwayScore: value(schedule, "scoreB"), Status: "finished", StartTime: firstString(schedule, "matchTime"), Cover: absoluteURL("https://www.doubaozhibo.com", firstString(m, "cover")), RecordingCount: len(lines), Heat: value(m, "views")})
+		items = append(items, feedItem{ID: id, Source: "doubao", SourceLabel: "豆包直播", Kind: "replay", RoomID: replayID, ReplayID: replayID, MatchID: id, Title: firstString(m, "title"), LeagueName: firstString(schedule, "league"), HomeTeam: home, AwayTeam: away, HomeTeamLogo: normalizedTeamLogo("https://www.doubaozhibo.com", []map[string]interface{}{schedule}, "homeLogo", "home_logo", "homeTeamLogo", "teamALogo"), AwayTeamLogo: normalizedTeamLogo("https://www.doubaozhibo.com", []map[string]interface{}{schedule}, "awayLogo", "away_logo", "awayTeamLogo", "teamBLogo"), HomeScore: value(schedule, "scoreA"), AwayScore: value(schedule, "scoreB"), Status: "finished", StartTime: firstString(schedule, "matchTime"), Cover: absoluteURL("https://www.doubaozhibo.com", firstString(m, "cover")), RecordingCount: len(lines), Heat: value(m, "views")})
 	}
 	return items
 }
@@ -526,7 +614,9 @@ func (s *Server) unifiedRoom(w http.ResponseWriter, r *http.Request) {
 			requestPath = "/api/v1/public/signals/" + url.PathEscape(id)
 		}
 	}
-	body, stale, err := s.fetchSource(r.Context(), source, requestPath, url.Values{}, false)
+	ctx, cancel := context.WithTimeout(r.Context(), s.roomTimeout)
+	defer cancel()
+	body, stale, err := s.fetchSource(ctx, source, requestPath, url.Values{}, false)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -573,8 +663,10 @@ func (s *Server) resolvePlayback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "data": map[string]interface{}{"url": "https://test.invalid/live/demo.m3u8", "kind": "hls", "status": "live"}})
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.playbackTimeout)
+	defer cancel()
 	if source == "kafei" {
-		room, err := s.roomData(source, id)
+		room, err := s.roomData(ctx, source, id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
@@ -595,7 +687,7 @@ func (s *Server) resolvePlayback(w http.ResponseWriter, r *http.Request) {
 	if kind == "replay" {
 		requestPath = "/api/v1/playbacks/" + url.PathEscape(id)
 	}
-	body, _, err := s.fetchSource(r.Context(), source, requestPath, url.Values{}, false)
+	body, _, err := s.fetchSource(ctx, source, requestPath, url.Values{}, false)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -619,8 +711,8 @@ func (s *Server) resolvePlayback(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "code": 0, "data": map[string]interface{}{"url": firstString(data, "url"), "kind": firstString(data, "kind"), "status": "live"}})
 }
 
-func (s *Server) roomData(source, id string) (map[string]interface{}, error) {
-	body, _, err := s.fetchSource(context.Background(), source, "/api/v1/room/"+url.PathEscape(id), url.Values{}, false)
+func (s *Server) roomData(ctx context.Context, source, id string) (map[string]interface{}, error) {
+	body, _, err := s.fetchSource(ctx, source, "/api/v1/room/"+url.PathEscape(id), url.Values{}, false)
 	if err != nil {
 		return nil, err
 	}
@@ -820,6 +912,14 @@ func absoluteURL(base, value string) string {
 		return value
 	}
 	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(value, "/")
+}
+func normalizedTeamLogo(base string, sources []map[string]interface{}, keys ...string) string {
+	for _, source := range sources {
+		if value := firstString(source, keys...); value != "" {
+			return absoluteURL(base, value)
+		}
+	}
+	return ""
 }
 func intPtr(value int) *int { return &value }
 func mapsToInterfaces(values []map[string]interface{}) []interface{} {

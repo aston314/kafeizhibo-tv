@@ -11,6 +11,7 @@ android {
         versionCode product.versionCode
         versionName product.versionName
         resValue "string", "app_name", product.displayName
+        resValue "string", "app_version", product.versionName
         ndk { abiFilters.addAll(product.abis) }
     }
     buildFeatures { buildConfig true }

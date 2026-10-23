@@ -31,6 +31,7 @@
   }
   function setVideoPlaceholder(message, loading) {
     var placeholder = document.getElementById('video-placeholder'); if (!placeholder) return;
+    layer.classList.toggle('is-loading', !!loading);
     placeholder.innerHTML = (loading ? '<span class="state-spinner player-loading-spinner" aria-hidden="true"></span>' : '') + '<span>' + escapeHTML(message) + '</span>';
     placeholder.hidden = false;
   }
@@ -41,6 +42,27 @@
   function text(item, key, fallback) { return item && item[key] != null ? item[key] : fallback || ''; }
   function homeTeam(item) { return text(item, 'home_team', item.homeTeam && item.homeTeam.name || '主队'); }
   function awayTeam(item) { return text(item, 'away_team', item.awayTeam && item.awayTeam.name || '客队'); }
+  function teamLogo(item, side, source) {
+    var details = item.match_info || item.matchInfo || item.match || item.schedule || {};
+    var value = item[side + '_team_logo'] || item[side + 'TeamLogo'] || item[side + 'Logo'] || details[side + '_team_logo'] || details[side + 'Logo'];
+    return imageURL(value, source);
+  }
+  function teamRow(name, logo, score) {
+    var image = logo ? '<img class="team-logo" src="' + escapeHTML(logo) + '" alt="" aria-hidden="true" loading="lazy">' : '';
+    return '<div class="team-row"><span class="team-name">' + image + '<span class="team-name-text">' + escapeHTML(name) + '</span></span><span class="score">' + escapeHTML(score) + '</span></div>';
+  }
+  function formatLocalMatchTime(value) {
+    if (!value) return '';
+    var raw = String(value);
+    if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) return raw.replace('T', ' ').slice(0, 16);
+    var date = new Date(raw);
+    if (isNaN(date.getTime())) return raw;
+    function pad(number) { return number < 10 ? '0' + number : String(number); }
+    return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+  }
+  function watchTeamLogos(root) {
+    root.querySelectorAll('.team-logo').forEach(function (image) { image.addEventListener('error', function () { image.style.display = 'none'; }); });
+  }
   function normalizeMatchTitle(value) { return String(value == null ? '' : value).replace(/\s+vs\s+/gi, ' VS '); }
   function cardsFor(page, category, pageNumber, done, cursor) {
     get('/api/v2/feed', { view: page, source: state.source, category: category, page: pageNumber, size: PAGE_SIZE, cursor: cursor || '' }, function (err, result) {
@@ -93,13 +115,16 @@
     var badge = kind === 'replay' ? '录像' : status === 'finished' ? '已结束' : (status === 'live' || status === 'online' || status === '直播中') ? '直播中' : '即将开始';
     var image = imageURL(item.cover || item.screenshot || item.cover_image || item.match_info && item.match_info.screenshot, source);
     var cardId = 'card-' + String(room || id || Math.random()).replace(/[^a-zA-Z0-9_-]/g, '');
-    var time = item.start_time || item.match_time || item.time || '';
+    var time = formatLocalMatchTime(item.start_time || item.match_time || item.time || '');
     var heat = item.heat ? '热度 ' + item.heat : '';
     var routes = kind === 'replay' ? (item.recording_count || 1) + ' 路录像' : item.signal_count ? item.signal_count + ' 路直播' : '';
     var sport = item.sport || ({ '1': '足球', '2': '篮球', '3': '网球', '19': '台球' }[String(item.category || item.type)] || '足球');
     var artStyle = image ? ' style="background-image:url(\'' + escapeHTML(image) + '\')"' : '';
     var caption = time || (kind === 'replay' ? '完整录像' : '');
-    return '<button class="match-card focusable" data-focus="' + cardId + '" data-source="' + escapeHTML(source) + '" data-room="' + escapeHTML(room) + '" data-match="' + escapeHTML(id) + '" data-kind="' + kind + '" data-title="' + escapeHTML(title) + '" data-team-home="' + escapeHTML(homeTeam(item)) + '" data-team-away="' + escapeHTML(awayTeam(item)) + '" data-league="' + escapeHTML(item.league_name || '') + '"><div class="card-art" data-sport="' + escapeHTML(sport) + '"' + artStyle + '><span class="card-badge ' + (badge === '即将开始' ? 'upcoming' : badge === '已结束' ? 'finished' : kind === 'replay' ? 'replay' : '') + '">' + badge + '</span><span class="card-source source-' + escapeHTML(source) + '">' + escapeHTML(item.source_label || (source === 'doubao' ? '豆包直播' : '咖啡直播')) + '</span><div class="art-meta"><span>' + escapeHTML(item.league_name || '') + '</span><span class="heat">' + escapeHTML(heat) + '</span></div></div><div class="card-info"><div class="teams"><span class="team-name">' + escapeHTML(homeTeam(item)) + '</span><span class="score">' + escapeHTML(item.home_score == null || status === 'upcoming' ? '' : item.home_score) + '</span><span class="vs">VS</span><span class="score">' + escapeHTML(item.away_score == null || status === 'upcoming' ? '' : item.away_score) + '</span><span class="team-name">' + escapeHTML(awayTeam(item)) + '</span></div><div class="card-caption">' + (caption ? '<strong>' + escapeHTML(caption) + '</strong>' : '') + '<span>' + escapeHTML(routes) + '</span></div></div></button>';
+    var homeScore = item.home_score == null || status === 'upcoming' ? '' : item.home_score;
+    var awayScore = item.away_score == null || status === 'upcoming' ? '' : item.away_score;
+    var teams = '<div class="teams">' + teamRow(homeTeam(item), teamLogo(item, 'home', source), homeScore) + teamRow(awayTeam(item), teamLogo(item, 'away', source), awayScore) + '</div>';
+    return '<button class="match-card focusable" data-focus="' + cardId + '" data-source="' + escapeHTML(source) + '" data-room="' + escapeHTML(room) + '" data-match="' + escapeHTML(id) + '" data-kind="' + kind + '" data-title="' + escapeHTML(title) + '" data-team-home="' + escapeHTML(homeTeam(item)) + '" data-team-away="' + escapeHTML(awayTeam(item)) + '" data-league="' + escapeHTML(item.league_name || '') + '"><div class="card-art" data-sport="' + escapeHTML(sport) + '"' + artStyle + '><span class="card-badge ' + (badge === '即将开始' ? 'upcoming' : badge === '已结束' ? 'finished' : kind === 'replay' ? 'replay' : '') + '">' + badge + '</span><span class="card-source source-' + escapeHTML(source) + '">' + escapeHTML(item.source_label || (source === 'doubao' ? '豆包直播' : '咖啡直播')) + '</span><div class="art-meta"><span>' + escapeHTML(item.league_name || '') + '</span><span class="heat">' + escapeHTML(heat) + '</span></div></div><div class="card-info">' + teams + '<div class="card-caption">' + (caption ? '<strong>' + escapeHTML(caption) + '</strong>' : '') + '<span>' + escapeHTML(routes) + '</span></div></div></button>';
   }
   function section(title, items, kind) { if (!items || !items.length) return title ? '<section class="feed-section" data-section-kind="' + kind + '"><div class="section-head"><h2 class="section-title">' + title + '</h2><span class="section-note">暂无内容</span></div><div class="card-grid" data-grid-kind="' + kind + '"></div></section>' : '<div class="state-panel"><div>暂无内容</div></div>'; var head = title ? '<div class="section-head"><h2 class="section-title">' + title + '</h2><span class="section-note">' + items.length + ' 场</span></div>' : ''; return '<section class="feed-section" data-section-kind="' + kind + '">' + head + '<div class="card-grid" data-grid-kind="' + kind + '">' + items.map(function (item) { return matchCard(item, kind); }).join('') + '</div></section>'; }
   function loadPage(restore) {
@@ -135,10 +160,12 @@
       else {
         content.innerHTML = section('', data.items || [], 'replay');
       }
+      watchTeamLogos(content);
       content.querySelectorAll('.match-card').forEach(function (card) { card.addEventListener('click', function () { openRoom(card); }); });
       categorySlot.querySelectorAll('.filter-chip').forEach(function (chip) { chip.addEventListener('click', function () { if (chip.getAttribute('data-filter') === 'source') state.source = chip.getAttribute('data-source'); else state.category = chip.getAttribute('data-category'); state.focused = chip.getAttribute('data-focus'); loadPage(state.focused); }); });
       var retry = content.querySelector('[data-action="retry"]'); if (retry) retry.addEventListener('click', function () { loadPage(); });
-      var restored = previousFocus && focusById(previousFocus);
+      var restoreTarget = state.focused && state.focused !== previousFocus ? state.focused : previousFocus;
+      var restored = restoreTarget && focusById(restoreTarget);
       if (!restored && (state.page === 'live' || state.page === 'schedule' || state.page === 'replay')) focusById('cat-' + state.category);
       else if (!restored) focusById(firstCardId());
       updatePagination(feedKey);
@@ -162,7 +189,7 @@
   function appendItems(items, kind, targetGrid) {
     if (!items || !items.length || !targetGrid) return;
     var holder = document.createElement('div'); holder.innerHTML = items.map(function (item) { return matchCard(item, kind); }).join('');
-    while (holder.firstChild) { var card = holder.firstChild; card.addEventListener('click', function () { openRoom(this); }); targetGrid.appendChild(card); }
+    while (holder.firstChild) { var card = holder.firstChild; card.addEventListener('click', function () { openRoom(this); }); watchTeamLogos(card); targetGrid.appendChild(card); }
   }
   function loadMore() {
     var feedKey = state.page + ':' + state.category + ':' + state.source; var feed = state.feeds[feedKey];
@@ -200,7 +227,37 @@
   }
   function setConnection(online) { document.documentElement.setAttribute('data-connection', online ? 'connected' : 'error'); }
   function firstCardId() { var card = content.querySelector('.match-card'); return card ? card.getAttribute('data-focus') : 'nav-' + state.page; }
-  function focusById(id) { if (!id) return false; var target = document.querySelector('[data-focus="' + id.replace(/"/g, '') + '"]'); if (!target) return false; target.focus(); state.focused = id; target.scrollIntoView({ block: 'nearest', inline: 'nearest' }); return true; }
+  function focusTarget(target) {
+    if (!target || !target.focus) return false;
+    var scrollParents = []; var node = target.parentElement;
+    while (node && node !== document.body && node !== document.documentElement) {
+      var style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+      var canScrollX = !!style && /(auto|scroll)/.test(style.overflowX) && node.scrollWidth > node.clientWidth;
+      var canScrollY = !!style && /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
+      if (canScrollX || canScrollY) scrollParents.push({ element: node, x: canScrollX, y: canScrollY, left: node.scrollLeft, top: node.scrollTop });
+      node = node.parentElement;
+    }
+    var pageX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+    var pageY = window.pageYOffset || document.documentElement.scrollTop || 0;
+    try { target.focus({ preventScroll: true }); } catch (error) { target.focus(); }
+    scrollParents.forEach(function (parent) { parent.element.scrollLeft = parent.left; parent.element.scrollTop = parent.top; });
+    if ((window.pageXOffset || document.documentElement.scrollLeft || 0) !== pageX || (window.pageYOffset || document.documentElement.scrollTop || 0) !== pageY) window.scrollTo(pageX, pageY);
+    scrollParents.forEach(function (parent) {
+      var container = parent.element; var bounds = container.getBoundingClientRect(); var rect = target.getBoundingClientRect(); var inset = 8;
+      var top = bounds.top + container.clientTop + inset; var bottom = bounds.top + container.clientTop + container.clientHeight - inset;
+      var left = bounds.left + container.clientLeft + inset; var right = bounds.left + container.clientLeft + container.clientWidth - inset;
+      if (parent.y && rect.height <= bottom - top) {
+        if (rect.top < top) container.scrollTop += rect.top - top;
+        else if (rect.bottom > bottom) container.scrollTop += rect.bottom - bottom;
+      }
+      if (parent.x && rect.width <= right - left) {
+        if (rect.left < left) container.scrollLeft += rect.left - left;
+        else if (rect.right > right) container.scrollLeft += rect.right - right;
+      }
+    });
+    return true;
+  }
+  function focusById(id) { if (!id) return false; var target = document.querySelector('[data-focus="' + id.replace(/"/g, '') + '"]'); if (!target || !focusTarget(target)) return false; state.focused = id; return true; }
   function visibleFocusables(root) { return Array.prototype.slice.call(root.querySelectorAll('.focusable, .nav-item')).filter(function (item) { var rect = item.getBoundingClientRect(); var style = window.getComputedStyle ? window.getComputedStyle(item) : null; return rect.width > 0 && rect.height > 0 && !item.disabled && (!style || (style.visibility !== 'hidden' && style.opacity !== '0')); }); }
   function spatialTarget(current, candidates, direction) {
     if (!current) return candidates[0] || null;
@@ -223,33 +280,35 @@
     if (state.room) {
       showPlayerControls();
       var playerTargets = visibleFocusables(layer); var playerNext = spatialTarget(current, playerTargets, direction);
-      if (playerNext) { playerNext.focus(); if (playerNext.classList.contains('signal-button')) showSignalPanel(); }
+      if (playerNext) { focusTarget(playerNext); if (playerNext.classList.contains('signal-button')) showSignalPanel(); }
       return;
     }
     if (current.classList.contains('nav-item')) {
       var navIndex = Array.prototype.indexOf.call(navButtons, current);
-      if (direction === 'ArrowUp' && navIndex > 0) navButtons[navIndex - 1].focus();
-      else if (direction === 'ArrowDown' && navIndex < navButtons.length - 1) navButtons[navIndex + 1].focus();
+      if (direction === 'ArrowUp' && navIndex > 0) focusTarget(navButtons[navIndex - 1]);
+      else if (direction === 'ArrowDown' && navIndex < navButtons.length - 1) focusTarget(navButtons[navIndex + 1]);
       else if (direction === 'ArrowRight') {
         if (state.page === 'support') { focusById('support-wechat'); return; }
+        var firstCard = content.querySelector('.match-card');
+        if (firstCard) { focusTarget(firstCard); state.focused = firstCard.getAttribute('data-focus'); return; }
         if (focusById('source-' + state.source)) return;
-        focusById(firstCardId());
+        focusById('cat-' + state.category);
       }
       return;
     }
     if (current.classList.contains('support-card')) {
       var supportCards = Array.prototype.slice.call(content.querySelectorAll('.support-card')); var supportIndex = supportCards.indexOf(current);
-      if (direction === 'ArrowLeft' && supportIndex > 0) supportCards[supportIndex - 1].focus();
+      if (direction === 'ArrowLeft' && supportIndex > 0) focusTarget(supportCards[supportIndex - 1]);
       else if (direction === 'ArrowLeft') focusById('nav-support');
-      else if (direction === 'ArrowRight' && supportIndex < supportCards.length - 1) supportCards[supportIndex + 1].focus();
+      else if (direction === 'ArrowRight' && supportIndex < supportCards.length - 1) focusTarget(supportCards[supportIndex + 1]);
       else if (direction === 'ArrowUp') focusById('nav-support');
       return;
     }
     if (current.classList.contains('filter-chip')) {
       var filterKind = current.getAttribute('data-filter'); var filterSelector = filterKind === 'source' ? '.source-chip' : '.category-chip:not(.source-chip)'; var chips = Array.prototype.slice.call(categorySlot.querySelectorAll(filterSelector)); var chipIndex = chips.indexOf(current);
-      if (direction === 'ArrowLeft' && chipIndex > 0) chips[chipIndex - 1].focus();
+      if (direction === 'ArrowLeft' && chipIndex > 0) focusTarget(chips[chipIndex - 1]);
       else if (direction === 'ArrowLeft') focusById('nav-' + state.page);
-      else if (direction === 'ArrowRight' && chipIndex < chips.length - 1) chips[chipIndex + 1].focus();
+      else if (direction === 'ArrowRight' && chipIndex < chips.length - 1) focusTarget(chips[chipIndex + 1]);
       else if (direction === 'ArrowRight' && filterKind === 'source') focusById('cat-' + state.category);
       else if (direction === 'ArrowRight') focusById(firstCardId());
       else if (direction === 'ArrowDown' && filterKind === 'source') focusById('cat-' + state.category);
@@ -260,19 +319,18 @@
     }
     if (current.classList.contains('match-card')) {
       var cards = Array.prototype.slice.call(content.querySelectorAll('.match-card')); var nextCard = spatialTarget(current, cards, direction);
-      if (nextCard) { nextCard.focus(); nextCard.scrollIntoView({ block: 'nearest', inline: 'nearest' }); return; }
+      if (nextCard) { focusTarget(nextCard); return; }
       if (direction === 'ArrowLeft') {
         var rowCards = cards.filter(function (card) { return Math.abs(card.getBoundingClientRect().top - current.getBoundingClientRect().top) < 8; });
         if (rowCards.length && rowCards[0] === current) focusById('nav-' + state.page);
       } else if (direction === 'ArrowUp') {
         var above = spatialTarget(current, cards, 'ArrowUp');
-        if (!above && state.page !== 'home') focusById('cat-' + state.category);
-        else if (!above) focusById('nav-' + state.page);
+        if (!above) focusById('cat-' + state.category);
       }
       return;
     }
     var pageTargets = visibleFocusables(document.querySelector('.app-shell')); var pageNext = spatialTarget(current, pageTargets, direction);
-    if (pageNext) pageNext.focus();
+    if (pageNext) focusTarget(pageNext);
   }
   function showToast(message) { toast.textContent = message; toast.classList.add('visible'); window.setTimeout(function () { toast.classList.remove('visible'); }, 2300); }
   function openRoom(card) {
@@ -280,7 +338,8 @@
     var roomLabel = kind === 'replay' ? '回放' : '直播';
     state.focused = card.getAttribute('data-focus'); state.room = { title: title, previous: state.focused, card: card, roomId: room || match, matchId: match, source: source, kind: kind, signals: [], playing: false, ended: false };
     layer.hidden = false;
-    layer.classList.remove('is-controls-hidden', 'is-fullscreen', 'is-ended');
+    layer.classList.remove('is-controls-hidden', 'is-fullscreen', 'is-ended', 'is-buffering');
+    layer.classList.add('is-loading');
     layer.innerHTML = '<section class="room-panel" role="dialog" aria-modal="true"><div class="player-area"><div class="video-wrap"><video id="room-video" class="player-surface focusable" data-focus="room-video" tabindex="-1" aria-label="' + roomLabel + '视频" playsinline></video><div id="video-placeholder" class="player-placeholder"><span class="state-spinner player-loading-spinner" aria-hidden="true"></span><span>正在获取' + roomLabel + '线路…</span></div><div class="player-topbar"><div class="player-title"><span class="live-label">' + roomLabel + '</span><div class="player-title-text"><strong>' + escapeHTML(title) + '</strong><small>' + escapeHTML(card.getAttribute('data-league')) + '</small></div></div><button class="close-button focusable" data-room-close="1" data-focus="room-close" aria-label="返回"><svg class="close-icon"><use xlink:href="#icon-back"></use></svg><span>返回</span></button></div><div id="signal-panel" class="signal-panel" aria-label="' + roomLabel + '线路" hidden><div class="signal-panel-title">选择线路</div><div id="signal-list" class="signal-list"><div class="section-note">正在获取…</div></div></div><div class="player-controls"><button id="player-toggle" class="player-control focusable" data-player-action="toggle" data-focus="player-toggle" aria-label="播放" title="播放"><svg id="player-icon" class="player-icon"><use xlink:href="#icon-play"></use></svg></button><button id="player-fullscreen" class="player-icon-button focusable" data-player-action="fullscreen" data-focus="player-fullscreen" aria-label="全屏" title="全屏"><svg id="fullscreen-icon" class="player-icon"><use xlink:href="#icon-fullscreen"></use></svg></button></div></div></div></section>';
     layer.querySelector('[data-room-close]').addEventListener('click', closeRoom);
     layer.onclick = function (e) { if (e.target === layer) closeRoom(); };
@@ -324,7 +383,7 @@
       if (!state.room || !state.room.playing) return;
       var surface = document.getElementById('room-video');
       if (layer.contains(document.activeElement) && document.activeElement !== surface && document.activeElement.classList.contains('focusable')) return;
-      if (surface && layer.contains(document.activeElement)) surface.focus();
+      if (surface && layer.contains(document.activeElement)) focusTarget(surface);
       var panel = document.getElementById('signal-panel');
       if (panel && !panel.hidden) panel.classList.add('is-auto-hidden');
       layer.classList.add('is-controls-hidden');
@@ -440,9 +499,9 @@
     if (state.hls && state.hls.destroy) { state.hls.destroy(); state.hls = null; }
     video.pause(); video.removeAttribute('src'); video.load();
     video.onerror = function () { handlePlaybackFailure(video, video.error || null); };
-    video.onplaying = function () { if (state.room) state.room.playing = true; placeholder.hidden = true; updatePlayerControl(); video.focus(); showPlayerControls(); };
-    video.onpause = function () { if (state.room) state.room.playing = false; updatePlayerControl(); showPlayerControls(); };
-    video.onwaiting = function () { if (state.room) state.room.playing = false; setVideoPlaceholder('正在缓冲…', true); showPlayerControls(); };
+    video.onplaying = function () { if (state.room) state.room.playing = true; layer.classList.remove('is-loading', 'is-buffering'); placeholder.hidden = true; updatePlayerControl(); focusTarget(video); showPlayerControls(); };
+    video.onpause = function () { if (state.room) state.room.playing = false; layer.classList.remove('is-buffering'); updatePlayerControl(); showPlayerControls(); };
+    video.onwaiting = function () { if (state.room) state.room.playing = false; layer.classList.add('is-buffering'); setVideoPlaceholder('正在缓冲…', true); showPlayerControls(); };
     video.onended = function () { showPlaybackEnded(state.room && state.room.kind === 'live' ? '直播已结束' : '播放已结束'); };
     if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = url; requestVideoPlayback(video); }
     else if (window.Hls && window.Hls.isSupported()) {
@@ -467,11 +526,11 @@
   });
   document.addEventListener('mouseover', function (event) {
     var target = event.target && event.target.closest ? event.target.closest('.nav-item, .focusable') : null;
-    if (target && !state.room && document.activeElement !== target) target.focus();
+    if (target && !state.room && document.activeElement !== target) focusTarget(target);
   });
   layer.addEventListener('mouseover', function (event) {
     var target = event.target && event.target.closest ? event.target.closest('.focusable') : null;
-    if (target && state.room && document.activeElement !== target) { target.focus(); if (target.classList.contains('signal-button')) showSignalPanel(); }
+    if (target && state.room && document.activeElement !== target) { focusTarget(target); if (target.classList.contains('signal-button')) showSignalPanel(); }
   });
   layer.addEventListener('mousemove', function () { if (state.room) showPlayerControls(); });
   document.addEventListener('focusin', function (event) { var target = event.target; if (target && target.getAttribute) { var id = target.getAttribute('data-focus'); if (id) state.focused = id; if (state.room && layer.contains(target) && target.id !== 'room-video' && target.classList.contains('focusable')) showPlayerControls(); } });
