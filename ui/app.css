@@ -13,7 +13,7 @@ button:focus { outline:0; }
 @media (min-width:1200px) { .sidebar { flex-basis:220px; width:220px; } }
 @media (min-width:1600px) { .sidebar { flex-basis:260px; width:260px; } }
 .brand { height:2.6em; margin:0 0 1.2em .35em; display:flex; align-items:center; font-weight:700; white-space:nowrap; }
-.brand-mark { width:1.9em; height:1.9em; flex:none; display:flex; align-items:center; justify-content:center; border-radius:.5em; background:#ff7a1a; color:#1a0d02; }
+.brand-mark { width:1.9em; height:1.9em; flex:none; display:flex; align-items:center; justify-content:center; border:2px solid #ff7a1a; border-radius:.5em; background:#101820; color:#101820; }
 .brand-icon { width:1.15em; height:1.15em; flex:none; color:currentColor; }
 .brand > span:last-child, .nav-item > span:last-child { display:block; opacity:1; }
 .nav-list { display:flex; flex-direction:column; }
