@@ -13,3 +13,16 @@
 ## Android 构建
 
 先安装 Android SDK/NDK、JDK 和 Gradle，再运行 `./scripts/build_android_binaries.sh` 生成三个 ABI 的 Go 核心，随后在 `android/` 执行 `gradle assembleDebug`。公开仓库的 GitHub Actions 会自动执行检查并上传 debug APK；当前开发环境没有 JDK/Gradle，因此 APK 不在本机编译。
+
+## Android Release Action
+
+发布工作流位于 `.github/workflows/android-release.yml`，只接受 `v*` 标签，并要求标签提交已经在 `main` 上。它会构建签名 APK，校验应用包名、版本、最低 SDK 和签名证书，并在当前仓库的 GitHub Release 中发布 APK、`SHA256SUMS.txt` 和 `update.json`。
+
+在 GitHub 仓库的 **Settings -> Secrets and variables -> Actions -> New repository secret** 中填写以下四项：
+
+- `ANDROID_KEYSTORE_BASE64`：签名 keystore 文件经过 base64 编码后的完整内容；
+- `ANDROID_KEYSTORE_PASSWORD`：keystore 密码；
+- `ANDROID_KEY_ALIAS`：签名 key alias；
+- `ANDROID_KEY_PASSWORD`：签名 key 密码。
+
+`GITHUB_TOKEN` 由 GitHub Actions 自动提供，不需要手动创建。配置完成后，可以推送 `v0.1.0` 这类标签，或在 Actions 中手动运行 **Android release APK** 并填写已有标签。

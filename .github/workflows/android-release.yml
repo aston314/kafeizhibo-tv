@@ -1,0 +1,186 @@
+name: Android release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: '1.23'
+  JAVA_VERSION: '17'
+  GRADLE_VERSION: '8.10.2'
+  ANDROID_BUILD_TOOLS: '35.0.0'
+  ANDROID_NDK_VERSION: '27.2.12479018'
+  ANDROID_PLATFORM: 'android-35'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve release tag
+        id: release-tag
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            tag="$DISPATCH_TAG"
+          else
+            tag="$GITHUB_REF_NAME"
+          fi
+          [[ "$tag" == v* ]] || { echo "Release tag must start with v" >&2; exit 1; }
+          echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release-tag.outputs.tag_name }}
+          fetch-depth: 0
+
+      - name: Verify release tag is on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor HEAD origin/main || {
+            echo "The release tag must point to a commit reachable from main" >&2
+            exit 1
+          }
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK and NDK
+        run: sdkmanager "platform-tools" "platforms;${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}"
+
+      - name: Verify source
+        run: |
+          go test -race ./...
+          node --check ui/app.js
+          git diff --check
+
+      - name: Build Go cores for Android ABIs
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          ./scripts/build_android_binaries.sh
+
+      - name: Verify signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "$ANDROID_KEYSTORE_BASE64" ]] || missing+=(ANDROID_KEYSTORE_BASE64)
+          [[ -n "$ANDROID_KEYSTORE_PASSWORD" ]] || missing+=(ANDROID_KEYSTORE_PASSWORD)
+          [[ -n "$ANDROID_KEY_ALIAS" ]] || missing+=(ANDROID_KEY_ALIAS)
+          [[ -n "$ANDROID_KEY_PASSWORD" ]] || missing+=(ANDROID_KEY_PASSWORD)
+          if (( ${#missing[@]} )); then
+            printf 'Missing repository secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Restore signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/sports-live-tv-release.keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          chmod 600 "$ANDROID_KEYSTORE_PATH"
+          test -s "$ANDROID_KEYSTORE_PATH"
+
+      - name: Set up Gradle
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Assemble signed release APK
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/sports-live-tv-release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: gradle --no-daemon assembleRelease
+
+      - name: Package and verify release files
+        id: package
+        env:
+          RELEASE_TAG: ${{ steps.release-tag.outputs.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAPT="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/apksigner"
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK_PATH"
+          PACKAGE_NAME="$(node -p "require('./app.json').applicationId")"
+          VERSION_NAME="$(node -p "require('./app.json').versionName")"
+          VERSION_CODE="$(node -p "require('./app.json').versionCode")"
+          MIN_SDK="$(node -p "require('./app.json').minSdk")"
+          APK_NAME="sports-live-tv-${VERSION_NAME}.apk"
+          "$AAPT" dump badging "$APK_PATH" | grep -F "name='${PACKAGE_NAME}'"
+          "$AAPT" dump badging "$APK_PATH" | grep -F "versionCode='${VERSION_CODE}'"
+          "$AAPT" dump badging "$APK_PATH" | grep -F "versionName='${VERSION_NAME}'"
+          "$AAPT" dump badging "$APK_PATH" | grep -F "sdkVersion:'${MIN_SDK}'"
+          "$APKSIGNER" verify --print-certs "$APK_PATH"
+          mkdir -p release-assets
+          cp "$APK_PATH" "release-assets/$APK_NAME"
+          APK_SHA256="$(sha256sum "release-assets/$APK_NAME" | awk '{print $1}')"
+          APK_SIZE="$(stat -c '%s' "release-assets/$APK_NAME")"
+          printf '%s  %s\n' "$APK_SHA256" "$APK_NAME" > release-assets/SHA256SUMS.txt
+          export PACKAGE_NAME VERSION_NAME VERSION_CODE MIN_SDK APK_NAME APK_SHA256 APK_SIZE
+          node <<'NODE'
+          const fs = require('fs');
+          const data = {
+            schema: 1,
+            package_name: process.env.PACKAGE_NAME,
+            version_code: Number(process.env.VERSION_CODE),
+            version_name: process.env.VERSION_NAME,
+            min_sdk: Number(process.env.MIN_SDK),
+            size: Number(process.env.APK_SIZE),
+            sha256: process.env.APK_SHA256,
+            download_url: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.RELEASE_TAG}/${process.env.APK_NAME}`,
+            release_notes: `球赛直播 ${process.env.VERSION_NAME}`
+          };
+          fs.writeFileSync('release-assets/update.json', JSON.stringify(data, null, 2) + '\n');
+          NODE
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release-tag.outputs.tag_name }}
+          name: 球赛直播 ${{ steps.package.outputs.version_name }}
+          generate_release_notes: true
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
