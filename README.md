@@ -25,4 +25,4 @@
 - `ANDROID_KEY_ALIAS`：签名 key alias；
 - `ANDROID_KEY_PASSWORD`：签名 key 密码。
 
-`GITHUB_TOKEN` 由 GitHub Actions 自动提供，不需要手动创建。配置完成后，可以推送 `v0.1.0` 这类标签，或在 Actions 中手动运行 **Android release APK** 并填写已有标签。
+`GITHUB_TOKEN` 由 GitHub Actions 自动提供，不需要手动创建。配置完成后，可以推送 `vX.Y.Z` 版本标签，或在 Actions 中手动运行 **Android release APK** 并填写已有标签。

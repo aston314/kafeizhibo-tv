@@ -12,7 +12,7 @@ type Config struct {
 }
 
 func Load() Config {
-	return Config{ProductID: "sports-live-tv", DisplayName: "球赛直播", ApplicationID: "cc.kafeizhibo.tv", VersionName: "0.1.0", Upstream: envOr("KAFEI_UPSTREAM", "https://kafeizhibo.cc"), DoubaoUpstream: envOr("DOUBAO_UPSTREAM", "https://www.doubaozhibo.com")}
+	return Config{ProductID: "sports-live-tv", DisplayName: "球赛直播", ApplicationID: "cc.kafeizhibo.tv", VersionName: "0.1.1", Upstream: envOr("KAFEI_UPSTREAM", "https://kafeizhibo.cc"), DoubaoUpstream: envOr("DOUBAO_UPSTREAM", "https://www.doubaozhibo.com")}
 }
 
 func envOr(key, fallback string) string {
