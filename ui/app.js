@@ -338,7 +338,7 @@
     var roomLabel = kind === 'replay' ? '回放' : '直播';
     state.focused = card.getAttribute('data-focus'); state.room = { title: title, previous: state.focused, card: card, roomId: room || match, matchId: match, source: source, kind: kind, signals: [], playing: false, ended: false };
     layer.hidden = false;
-    layer.classList.remove('is-controls-hidden', 'is-fullscreen', 'is-ended', 'is-buffering');
+    layer.classList.remove('is-controls-hidden', 'is-fullscreen', 'is-ended', 'is-buffering', 'is-playback-error');
     layer.classList.add('is-loading');
     layer.innerHTML = '<section class="room-panel" role="dialog" aria-modal="true"><div class="player-area"><div class="video-wrap"><video id="room-video" class="player-surface focusable" data-focus="room-video" tabindex="-1" aria-label="' + roomLabel + '视频" playsinline></video><div id="video-placeholder" class="player-placeholder"><span class="state-spinner player-loading-spinner" aria-hidden="true"></span><span>正在获取' + roomLabel + '线路…</span></div><div class="player-topbar"><div class="player-title"><span class="live-label">' + roomLabel + '</span><div class="player-title-text"><strong>' + escapeHTML(title) + '</strong><small>' + escapeHTML(card.getAttribute('data-league')) + '</small></div></div><button class="close-button focusable" data-room-close="1" data-focus="room-close" aria-label="返回"><svg class="close-icon"><use xlink:href="#icon-back"></use></svg><span>返回</span></button></div><div id="signal-panel" class="signal-panel" aria-label="' + roomLabel + '线路" hidden><div class="signal-panel-title">选择线路</div><div id="signal-list" class="signal-list"><div class="section-note">正在获取…</div></div></div><div class="player-controls"><button id="player-toggle" class="player-control focusable" data-player-action="toggle" data-focus="player-toggle" aria-label="播放" title="播放"><svg id="player-icon" class="player-icon"><use xlink:href="#icon-play"></use></svg></button><button id="player-fullscreen" class="player-icon-button focusable" data-player-action="fullscreen" data-focus="player-fullscreen" aria-label="全屏" title="全屏"><svg id="fullscreen-icon" class="player-icon"><use xlink:href="#icon-fullscreen"></use></svg></button></div></div></div></section>';
     layer.querySelector('[data-room-close]').addEventListener('click', closeRoom);
@@ -448,7 +448,7 @@
     if (!state.room || video !== document.getElementById('room-video')) return;
     if (error && error.name === 'AbortError') return;
     if (video.ended) { showPlaybackEnded(state.room.kind === 'live' ? '直播已结束' : '播放已结束'); return; }
-    state.room.playing = false; updatePlayerControl(); showPlayerControls();
+    state.room.playing = false; layer.classList.remove('is-loading', 'is-buffering'); layer.classList.add('is-playback-error'); updatePlayerControl(); showPlayerControls();
     if (error && error.name === 'NotAllowedError') setVideoPlaceholder('自动播放受限，按播放键继续', false);
     else setVideoPlaceholder(state.room.kind === 'replay' ? '回放加载失败，请尝试其他线路' : '直播流中断，请尝试其他线路', false);
   }
@@ -494,12 +494,12 @@
     if (!url) { showToast('该线路暂不可用'); return; }
     state.room.ended = false; layer.classList.remove('is-ended');
     var video = document.getElementById('room-video'); var placeholder = document.getElementById('video-placeholder');
-    setVideoPlaceholder('正在连接直播源…', true);
+    layer.classList.remove('is-playback-error'); setVideoPlaceholder('正在连接直播源…', true);
     if (window.KafeiTVPlayer && typeof window.KafeiTVPlayer.open === 'function') { window.KafeiTVPlayer.open(url, state.room.title); setVideoPlaceholder('正在电视播放器中打开…', true); return; }
     if (state.hls && state.hls.destroy) { state.hls.destroy(); state.hls = null; }
     video.pause(); video.removeAttribute('src'); video.load();
     video.onerror = function () { handlePlaybackFailure(video, video.error || null); };
-    video.onplaying = function () { if (state.room) state.room.playing = true; layer.classList.remove('is-loading', 'is-buffering'); placeholder.hidden = true; updatePlayerControl(); focusTarget(video); showPlayerControls(); };
+    video.onplaying = function () { if (state.room) state.room.playing = true; layer.classList.remove('is-loading', 'is-buffering', 'is-playback-error'); placeholder.hidden = true; updatePlayerControl(); focusTarget(video); showPlayerControls(); };
     video.onpause = function () { if (state.room) state.room.playing = false; layer.classList.remove('is-buffering'); updatePlayerControl(); showPlayerControls(); };
     video.onwaiting = function () { if (state.room) state.room.playing = false; layer.classList.add('is-buffering'); setVideoPlaceholder('正在缓冲…', true); showPlayerControls(); };
     video.onended = function () { showPlaybackEnded(state.room && state.room.kind === 'live' ? '直播已结束' : '播放已结束'); };
