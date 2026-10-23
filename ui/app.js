@@ -534,6 +534,19 @@
   });
   layer.addEventListener('mousemove', function () { if (state.room) showPlayerControls(); });
   document.addEventListener('focusin', function (event) { var target = event.target; if (target && target.getAttribute) { var id = target.getAttribute('data-focus'); if (id) state.focused = id; if (state.room && layer.contains(target) && target.id !== 'room-video' && target.classList.contains('focusable')) showPlayerControls(); } });
+  // 旧版 WebView 不支持 :focus-within,用 .is-expanded 代替(CSS 里已配套)
+  var sidebar = document.querySelector('.sidebar');
+  if (sidebar) {
+    var syncSidebar = function () {
+      window.setTimeout(function () {
+        var active = document.activeElement;
+        if (active && sidebar.contains(active)) sidebar.classList.add('is-expanded');
+        else sidebar.classList.remove('is-expanded');
+      }, 0);
+    };
+    sidebar.addEventListener('focusin', syncSidebar);
+    sidebar.addEventListener('focusout', syncSidebar);
+  }
   document.addEventListener('fullscreenchange', updateFullscreenControl);
   document.addEventListener('webkitfullscreenchange', updateFullscreenControl);
   window.MingmingTVKey = function (code) { var keys = { 19: 'ArrowUp', 20: 'ArrowDown', 21: 'ArrowLeft', 22: 'ArrowRight', 23: 'Enter', 66: 'Enter', 4: 'Escape' }; var key = keys[code]; if (!key) return; var event = document.createEvent('Event'); event.initEvent('keydown', true, true); Object.defineProperty(event, 'key', { value: key }); document.dispatchEvent(event); };
