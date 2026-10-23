@@ -48,12 +48,19 @@ jobs:
           fetch-depth: 0
 
       - name: Verify release tag is on main
+        env:
+          RELEASE_TAG: ${{ steps.release-tag.outputs.tag_name }}
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin main --no-tags
           git merge-base --is-ancestor HEAD origin/main || {
             echo "The release tag must point to a commit reachable from main" >&2
+            exit 1
+          }
+          expected_tag="v$(node -p "require('./app.json').versionName")"
+          [[ "$RELEASE_TAG" == "$expected_tag" ]] || {
+            echo "Tag $RELEASE_TAG does not match app.json version ($expected_tag)" >&2
             exit 1
           }
 
