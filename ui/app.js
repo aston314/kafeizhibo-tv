@@ -17,6 +17,8 @@
   var signalHideTimer = null;
   var controlsHideTimer = null;
   var roomStatusTimer = null;
+  var frameRevealTimer = null;
+  var frameRevealToken = 0;
   if (window.KafeiTVApp) document.documentElement.classList.add('android-app');
   var paginationObserver = window.IntersectionObserver ? new IntersectionObserver(function (entries) {
     entries.forEach(function (entry) { if (entry.isIntersecting) loadMore(); });
@@ -34,6 +36,37 @@
     layer.classList.toggle('is-loading', !!loading);
     placeholder.innerHTML = (loading ? '<span class="state-spinner player-loading-spinner" aria-hidden="true"></span>' : '') + '<span>' + escapeHTML(message) + '</span>';
     placeholder.hidden = false;
+  }
+  function cancelFrameReveal() {
+    frameRevealToken += 1;
+    if (frameRevealTimer) window.clearTimeout(frameRevealTimer);
+    frameRevealTimer = null;
+  }
+  function revealVideoFrame(video, placeholder) {
+    cancelFrameReveal();
+    var token = frameRevealToken;
+    var deadline = Date.now() + 5000;
+    function valid() { return !!state.room && token === frameRevealToken && video === document.getElementById('room-video'); }
+    function reveal() {
+      if (!valid()) return;
+      if (video.readyState < 2 || !video.videoWidth) {
+        if (Date.now() < deadline) frameRevealTimer = window.setTimeout(reveal, 50);
+        return;
+      }
+      frameRevealTimer = null;
+      function commit() {
+        if (!valid()) return;
+        layer.classList.remove('is-loading', 'is-buffering', 'is-playback-error');
+        placeholder.hidden = true;
+        updatePlayerControl();
+        focusTarget(video);
+        showPlayerControls();
+      }
+      if (typeof video.requestVideoFrameCallback === 'function') video.requestVideoFrameCallback(function () { commit(); });
+      else if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(commit);
+      else frameRevealTimer = window.setTimeout(commit, 100);
+    }
+    reveal();
   }
   function rows(response) { var data = response && response.data; return Array.isArray(data) ? data : data && Array.isArray(data.list) ? data.list : data && Array.isArray(data.rows) ? data.rows : []; }
   function totalCount(response) { var value = response && response.total; if (value == null && response && response.data && !Array.isArray(response.data)) value = response.data.total; if (value == null) return null; value = Number(value); return isFinite(value) && value >= 0 ? value : null; }
@@ -419,6 +452,7 @@
   }
   function showPlaybackEnded(message) {
     if (!state.room) return;
+    cancelFrameReveal();
     state.room.playing = false; state.room.ended = true;
     if (roomStatusTimer) window.clearInterval(roomStatusTimer);
     roomStatusTimer = null;
@@ -447,6 +481,7 @@
   function handlePlaybackFailure(video, error) {
     if (!state.room || video !== document.getElementById('room-video')) return;
     if (error && error.name === 'AbortError') return;
+    cancelFrameReveal();
     if (video.ended) { showPlaybackEnded(state.room.kind === 'live' ? '直播已结束' : '播放已结束'); return; }
     state.room.playing = false; layer.classList.remove('is-loading', 'is-buffering'); layer.classList.add('is-playback-error'); updatePlayerControl(); showPlayerControls();
     if (error && error.name === 'NotAllowedError') setVideoPlaceholder('自动播放受限，按播放键继续', false);
@@ -494,13 +529,13 @@
     if (!url) { showToast('该线路暂不可用'); return; }
     state.room.ended = false; layer.classList.remove('is-ended');
     var video = document.getElementById('room-video'); var placeholder = document.getElementById('video-placeholder');
-    layer.classList.remove('is-playback-error'); setVideoPlaceholder('正在连接直播源…', true);
+    cancelFrameReveal(); layer.classList.remove('is-playback-error'); setVideoPlaceholder('正在连接直播源…', true);
     if (window.KafeiTVPlayer && typeof window.KafeiTVPlayer.open === 'function') { window.KafeiTVPlayer.open(url, state.room.title); setVideoPlaceholder('正在电视播放器中打开…', true); return; }
     if (state.hls && state.hls.destroy) { state.hls.destroy(); state.hls = null; }
     video.pause(); video.removeAttribute('src'); video.load();
     video.onerror = function () { handlePlaybackFailure(video, video.error || null); };
-    video.onplaying = function () { if (state.room) state.room.playing = true; layer.classList.remove('is-loading', 'is-buffering', 'is-playback-error'); placeholder.hidden = true; updatePlayerControl(); focusTarget(video); showPlayerControls(); };
-    video.onpause = function () { if (state.room) state.room.playing = false; layer.classList.remove('is-buffering'); updatePlayerControl(); showPlayerControls(); };
+    video.onplaying = function () { if (state.room) state.room.playing = true; revealVideoFrame(video, placeholder); };
+    video.onpause = function () { if (state.room) state.room.playing = false; cancelFrameReveal(); layer.classList.remove('is-buffering'); updatePlayerControl(); showPlayerControls(); };
     video.onwaiting = function () { if (state.room) state.room.playing = false; layer.classList.add('is-buffering'); setVideoPlaceholder('正在缓冲…', true); showPlayerControls(); };
     video.onended = function () { showPlaybackEnded(state.room && state.room.kind === 'live' ? '直播已结束' : '播放已结束'); };
     if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = url; requestVideoPlayback(video); }
@@ -513,7 +548,7 @@
     else setVideoPlaceholder('当前设备无法播放 HLS', false);
     if (!window.Hls && !hlsScriptRequested) { hlsScriptRequested = true; var script = document.createElement('script'); script.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js'; script.onload = function () { selectSignal(index, signals); }; script.onerror = function () { setVideoPlaceholder('播放器加载失败', false); }; document.head.appendChild(script); }
   }
-  function closeRoom() { if (!state.room) return; var previous = state.room.previous; var video = document.getElementById('room-video'); if (signalHideTimer) window.clearTimeout(signalHideTimer); if (controlsHideTimer) window.clearTimeout(controlsHideTimer); if (roomStatusTimer) window.clearInterval(roomStatusTimer); signalHideTimer = null; controlsHideTimer = null; roomStatusTimer = null; if (video) { video.pause(); video.removeAttribute('src'); video.load(); } if (state.hls && state.hls.destroy) state.hls.destroy(); state.hls = null; if (window.KafeiTVPlayer && window.KafeiTVPlayer.close) window.KafeiTVPlayer.close(); var exit = document.exitFullscreen || document.webkitExitFullscreen; if (fullscreenActive() && exit) { var exitRequest = exit.call(document); if (exitRequest && exitRequest.catch) exitRequest.catch(function () {}); } state.room = null; layer.classList.remove('is-controls-hidden', 'is-ended'); layer.hidden = true; layer.innerHTML = ''; focusById(previous); }
+  function closeRoom() { if (!state.room) return; cancelFrameReveal(); var previous = state.room.previous; var video = document.getElementById('room-video'); if (signalHideTimer) window.clearTimeout(signalHideTimer); if (controlsHideTimer) window.clearTimeout(controlsHideTimer); if (roomStatusTimer) window.clearInterval(roomStatusTimer); signalHideTimer = null; controlsHideTimer = null; roomStatusTimer = null; if (video) { video.pause(); video.removeAttribute('src'); video.load(); } if (state.hls && state.hls.destroy) state.hls.destroy(); state.hls = null; if (window.KafeiTVPlayer && window.KafeiTVPlayer.close) window.KafeiTVPlayer.close(); var exit = document.exitFullscreen || document.webkitExitFullscreen; if (fullscreenActive() && exit) { var exitRequest = exit.call(document); if (exitRequest && exitRequest.catch) exitRequest.catch(function () {}); } state.room = null; layer.classList.remove('is-controls-hidden', 'is-ended'); layer.hidden = true; layer.innerHTML = ''; focusById(previous); }
   function enterPage(page) { if (!pages[page]) return; state.page = page; state.category = 'all'; state.focused = 'nav-' + page; loadPage(state.focused); }
   navButtons.forEach(function (button) { button.addEventListener('click', function () { enterPage(button.getAttribute('data-page')); }); });
   document.addEventListener('keydown', function (event) {
