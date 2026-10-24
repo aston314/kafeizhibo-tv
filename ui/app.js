@@ -2,10 +2,10 @@
   'use strict';
   if (!NodeList.prototype.forEach) NodeList.prototype.forEach = Array.prototype.forEach;
   var categories = [{ id: 'all', label: '全部' }, { id: 'hot', label: '热门' }, { id: '1', label: '足球' }, { id: '2', label: '篮球' }, { id: '3', label: '网球' }, { id: '19', label: '台球' }];
-  var sources = [{ id: 'all', label: '全部来源' }, { id: 'kafei', label: '咖啡直播' }, { id: 'doubao', label: '豆包直播' }];
+  var sources = [{ id: 'kafei', label: '咖啡直播' }, { id: 'doubao', label: '豆包直播' }];
   var pages = { home: ['首页', '首页'], live: ['全部直播', '全部直播'], schedule: ['赛程', '赛程'], replay: ['录像回放', '录像回放'], support: ['打赏', '打赏'], settings: ['设置', '设置'] };
   var PAGE_SIZE = 12;
-  var state = { page: 'home', category: 'all', source: 'all', request: 0, cards: [], room: null, focused: null, hls: null, feeds: {}, loadingMore: false, supportModal: false, supportPrevious: null, appVersion: '', appVersionCode: 0, update: null };
+  var state = { page: 'home', category: 'all', source: 'doubao', request: 0, cards: [], room: null, focused: null, hls: null, feeds: {}, loadingMore: false, supportModal: false, supportPrevious: null, appVersion: '', appVersionCode: 0, update: null };
   var content = document.getElementById('page-content');
   var mainArea = document.querySelector('.main-area');
   var layer = document.getElementById('room-layer');
@@ -731,19 +731,6 @@
   });
   layer.addEventListener('mousemove', function () { if (state.room) showPlayerControls(); });
   document.addEventListener('focusin', function (event) { var target = event.target; if (target && target.getAttribute) { var id = target.getAttribute('data-focus'); if (id) state.focused = id; if (state.room && layer.contains(target) && target.id !== 'room-video' && target.classList.contains('focusable')) showPlayerControls(); } });
-  // 旧版 WebView 不支持 :focus-within,用 .is-expanded 代替(CSS 里已配套)
-  var sidebar = document.querySelector('.sidebar');
-  if (sidebar) {
-    var syncSidebar = function () {
-      window.setTimeout(function () {
-        var active = document.activeElement;
-        if (active && sidebar.contains(active)) sidebar.classList.add('is-expanded');
-        else sidebar.classList.remove('is-expanded');
-      }, 0);
-    };
-    sidebar.addEventListener('focusin', syncSidebar);
-    sidebar.addEventListener('focusout', syncSidebar);
-  }
   document.addEventListener('fullscreenchange', updateFullscreenControl);
   document.addEventListener('webkitfullscreenchange', updateFullscreenControl);
   window.MingmingTVKey = function (code) { var keys = { 19: 'ArrowUp', 20: 'ArrowDown', 21: 'ArrowLeft', 22: 'ArrowRight', 23: 'Enter', 66: 'Enter', 4: 'Escape' }; var key = keys[code]; if (!key) return; var event = document.createEvent('Event'); event.initEvent('keydown', true, true); Object.defineProperty(event, 'key', { value: key }); document.dispatchEvent(event); };

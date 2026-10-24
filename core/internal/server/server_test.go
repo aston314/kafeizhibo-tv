@@ -81,10 +81,11 @@ func TestDoubaoLiveFeedEnrichesRoomsFromSchedules(t *testing.T) {
 }
 
 func TestFixtureRoutesAndHealth(t *testing.T) {
-	s := New(product.Load(), "test", "fixture-test", true)
+	cfg := product.Load()
+	s := New(cfg, "test", "fixture-test", true)
 	for _, tc := range []struct{ path, want string }{
 		{"/health", `"ready":true`},
-		{"/api/v2/update", `"version_code":10`},
+		{"/api/v2/update", fmt.Sprintf(`"version_code":%d`, cfg.VersionCode)},
 		{"/api/v1/archor?type=2", `"category":2`},
 		{"/api/v1/room/1022", `"signals"`},
 	} {
