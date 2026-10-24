@@ -91,6 +91,7 @@ jobs:
 
       - name: Build Go cores for Android ABIs
         run: |
+          export BUILD_VERSION="$(node -p "require('./app.json').versionName")"
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
           ./scripts/build_android_binaries.sh
 
