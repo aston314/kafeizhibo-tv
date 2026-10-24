@@ -20,7 +20,7 @@ env:
   GRADLE_VERSION: '8.10.2'
   ANDROID_BUILD_TOOLS: '35.0.0'
   ANDROID_NDK_VERSION: '27.2.12479018'
-  ANDROID_PLATFORM: 'android-36'
+  ANDROID_PLATFORM: 'android-35'
 
 jobs:
   release:

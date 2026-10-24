@@ -11,7 +11,7 @@
   "upstream": "https://kafeizhibo.cc",
   "doubaoUpstream": "https://www.doubaozhibo.com",
   "playerAdapter": "media3-android-hls",
-  "media3Version": "1.11.1",
+  "media3Version": "1.8.0",
   "browserPlayer": "html5-hls",
   "memberFeatures": false,
   "stage": "preview"
