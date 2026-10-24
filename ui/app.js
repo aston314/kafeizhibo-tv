@@ -299,14 +299,13 @@
     var cardId = 'card-' + String(room || id || Math.random()).replace(/[^a-zA-Z0-9_-]/g, '');
     var time = formatLocalMatchTime(item.start_time || item.match_time || item.time || '');
     var heat = item.heat ? '热度 ' + item.heat : '';
-    var routes = kind === 'replay' ? (item.recording_count || 1) + ' 路录像' : item.signal_count ? item.signal_count + ' 路直播' : '';
     var sport = item.sport || ({ '1': '足球', '2': '篮球', '3': '网球', '19': '台球' }[String(item.category || item.type)] || '足球');
     var artStyle = image ? ' style="background-image:url(\'' + escapeHTML(image) + '\')"' : '';
-    var caption = time || (kind === 'replay' ? '完整录像' : '');
+    var caption = time || '时间待定';
     var homeScore = item.home_score == null || status === 'upcoming' ? '' : item.home_score;
     var awayScore = item.away_score == null || status === 'upcoming' ? '' : item.away_score;
     var teams = '<div class="teams">' + teamRow(homeTeam(item), teamLogo(item, 'home', source), homeScore) + teamRow(awayTeam(item), teamLogo(item, 'away', source), awayScore) + '</div>';
-    return '<button class="match-card focusable" data-focus="' + cardId + '" data-source="' + escapeHTML(source) + '" data-room="' + escapeHTML(room) + '" data-match="' + escapeHTML(id) + '" data-kind="' + kind + '" data-title="' + escapeHTML(title) + '" data-team-home="' + escapeHTML(homeTeam(item)) + '" data-team-away="' + escapeHTML(awayTeam(item)) + '" data-league="' + escapeHTML(item.league_name || '') + '"><div class="card-art" data-sport="' + escapeHTML(sport) + '"' + artStyle + '><span class="card-badge ' + (badge === '即将开始' ? 'upcoming' : badge === '已结束' ? 'finished' : kind === 'replay' ? 'replay' : '') + '">' + badge + '</span><span class="card-source source-' + escapeHTML(source) + '">' + escapeHTML(item.source_label || (source === 'doubao' ? '豆包直播' : '咖啡直播')) + '</span><div class="art-meta"><span>' + escapeHTML(item.league_name || '') + '</span><span class="heat">' + escapeHTML(heat) + '</span></div></div><div class="card-info">' + teams + '<div class="card-caption">' + (caption ? '<strong>' + escapeHTML(caption) + '</strong>' : '') + '<span>' + escapeHTML(routes) + '</span></div></div></button>';
+    return '<button class="match-card focusable" data-focus="' + cardId + '" data-source="' + escapeHTML(source) + '" data-room="' + escapeHTML(room) + '" data-match="' + escapeHTML(id) + '" data-kind="' + kind + '" data-title="' + escapeHTML(title) + '" data-team-home="' + escapeHTML(homeTeam(item)) + '" data-team-away="' + escapeHTML(awayTeam(item)) + '" data-league="' + escapeHTML(item.league_name || '') + '"><div class="card-art" data-sport="' + escapeHTML(sport) + '"' + artStyle + '><span class="card-badge ' + (badge === '即将开始' ? 'upcoming' : badge === '已结束' ? 'finished' : kind === 'replay' ? 'replay' : '') + '">' + badge + '</span><span class="card-source source-' + escapeHTML(source) + '">' + escapeHTML(item.source_label || (source === 'doubao' ? '豆包直播' : '咖啡直播')) + '</span><div class="art-meta"><span>' + escapeHTML(item.league_name || '') + '</span><span class="heat">' + escapeHTML(heat) + '</span></div></div><div class="card-info">' + teams + '<div class="card-caption"><strong>' + escapeHTML(caption) + '</strong></div></div></button>';
   }
   function section(title, items, kind) { if (!items || !items.length) return title ? '<section class="feed-section" data-section-kind="' + kind + '"><div class="section-head"><h2 class="section-title">' + title + '</h2><span class="section-note">暂无内容</span></div><div class="card-grid" data-grid-kind="' + kind + '"></div></section>' : '<div class="state-panel"><div>暂无内容</div></div>'; var head = title ? '<div class="section-head"><h2 class="section-title">' + title + '</h2><span class="section-note">' + items.length + ' 场</span></div>' : ''; return '<section class="feed-section" data-section-kind="' + kind + '">' + head + '<div class="card-grid" data-grid-kind="' + kind + '">' + items.map(function (item) { return matchCard(item, kind); }).join('') + '</div></section>'; }
   function loadPage(restore) {
@@ -350,10 +349,18 @@
       content.querySelectorAll('.match-card').forEach(function (card) { card.addEventListener('click', function () { openRoom(card); }); });
       categorySlot.querySelectorAll('.filter-chip').forEach(function (chip) { chip.addEventListener('click', function () { if (chip.getAttribute('data-filter') === 'source') state.source = chip.getAttribute('data-source'); else state.category = chip.getAttribute('data-category'); state.focused = chip.getAttribute('data-focus'); loadPage(state.focused); }); });
       var retry = content.querySelector('[data-action="retry"]'); if (retry) retry.addEventListener('click', function () { loadPage(); });
-      var restoreTarget = state.focused && state.focused !== previousFocus ? state.focused : previousFocus;
-      var restored = restoreTarget && focusById(restoreTarget);
-      if (!restored && (state.page === 'live' || state.page === 'schedule' || state.page === 'replay')) focusById('cat-' + state.category);
-      else if (!restored) focusById(firstCardId());
+      var navigationFocus = 'nav-' + state.page;
+      var navigationFocusUnchanged = previousFocus === navigationFocus && (!state.focused || state.focused === previousFocus);
+      if (navigationFocusUnchanged) {
+        var firstCard = content.querySelector('.match-card');
+        if (firstCard) { focusTarget(firstCard); state.focused = firstCard.getAttribute('data-focus'); }
+        else focusById('source-' + state.source);
+      } else {
+        var restoreTarget = state.focused && state.focused !== previousFocus ? state.focused : previousFocus;
+        var restored = restoreTarget && focusById(restoreTarget);
+        if (!restored && (state.page === 'live' || state.page === 'schedule' || state.page === 'replay')) focusById('cat-' + state.category);
+        else if (!restored) focusById(firstCardId());
+      }
       updatePagination(feedKey);
     });
   }
