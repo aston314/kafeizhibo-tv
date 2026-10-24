@@ -12,7 +12,7 @@ if (releaseRequested && !releaseSigningConfigured) {
 }
 android {
     namespace product.applicationId
-    compileSdk 35
+    compileSdk 36
     defaultConfig {
         applicationId product.applicationId
         minSdk product.minSdk
