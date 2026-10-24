@@ -80,7 +80,7 @@ func TestFixtureRoutesAndHealth(t *testing.T) {
 	s := New(product.Load(), "test", "fixture-test", true)
 	for _, tc := range []struct{ path, want string }{
 		{"/health", `"ready":true`},
-		{"/api/v2/update", `"version_code":8`},
+		{"/api/v2/update", `"version_code":9`},
 		{"/api/v1/archor?type=2", `"category":2`},
 		{"/api/v1/room/1022", `"signals"`},
 	} {
