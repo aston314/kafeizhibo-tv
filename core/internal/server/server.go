@@ -37,7 +37,7 @@ type cachedResponse struct {
 }
 
 func New(cfg product.Config, version, instance string, fixture bool) *Server {
-	return &Server{cfg: cfg, version: version, instance: instance, fixture: fixture, updateProxies: []string{"https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.com/"}, client: &http.Client{Timeout: 12 * time.Second}, doubaoClient: &http.Client{Timeout: 12 * time.Second}, feedTimeout: 10 * time.Second, roomTimeout: 10 * time.Second, playbackTimeout: 10 * time.Second, metadata: make(map[string]cachedResponse)}
+	return &Server{cfg: cfg, version: version, instance: instance, fixture: fixture, updateProxies: []string{"https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.com/"}, client: &http.Client{Timeout: 20 * time.Second}, doubaoClient: &http.Client{Timeout: 20 * time.Second}, feedTimeout: 10 * time.Second, roomTimeout: 10 * time.Second, playbackTimeout: 10 * time.Second, metadata: make(map[string]cachedResponse)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +127,8 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 			_ = resp.Body.Close()
 			resp = nil
 		}
-		timer := time.NewTimer(250 * time.Millisecond)
+		backoff := time.Duration(300*(attempt+1)) * time.Millisecond
+		timer := time.NewTimer(backoff)
 		select {
 		case <-r.Context().Done():
 			timer.Stop()
@@ -176,7 +177,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cacheable {
-		s.store(key, body, 20*time.Second)
+		s.store(key, body, 30*time.Second)
 	}
 	writeRawJSON(w, body)
 }
@@ -224,7 +225,7 @@ func (s *Server) store(key string, body []byte, ttl time.Duration) {
 		}
 	}
 	expires := now.Add(ttl)
-	s.metadata[key] = cachedResponse{body: append([]byte(nil), body...), expires: expires, staleUntil: expires.Add(2 * time.Minute)}
+	s.metadata[key] = cachedResponse{body: append([]byte(nil), body...), expires: expires, staleUntil: expires.Add(5 * time.Minute)}
 	s.mu.Unlock()
 }
 func writeRawJSON(w http.ResponseWriter, body []byte) {
