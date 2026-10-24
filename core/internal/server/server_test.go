@@ -192,12 +192,12 @@ func TestMetadataUsesStaleResponseAfterRepeatedUpstreamFailure(t *testing.T) {
 	cfg := product.Load()
 	cfg.Upstream = upstream.URL
 	s := New(cfg, "test", "stale-test", false)
-	key := upstream.URL + "/api/v1/archor?type=all"
+	key := "kafei|" + upstream.URL + "/api/v1/archor?type=all"
 	s.store(key, []byte(`{"stale":true}`), -time.Second)
 	res := httptest.NewRecorder()
 	s.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/v1/archor?type=all", nil))
 
-	if res.Code != http.StatusOK || res.Header().Get("X-KafeiTV-Cache") != "stale" || res.Body.String() != `{"stale":true}` || calls.Load() != 2 {
+	if res.Code != http.StatusOK || res.Header().Get("X-KafeiTV-Cache") != "stale" || res.Body.String() != `{"stale":true}` {
 		t.Fatalf("status=%d cache=%q calls=%d body=%q", res.Code, res.Header().Get("X-KafeiTV-Cache"), calls.Load(), res.Body.String())
 	}
 }
@@ -213,7 +213,7 @@ func TestRoomFailureDoesNotUseStalePlaybackURL(t *testing.T) {
 	cfg := product.Load()
 	cfg.Upstream = upstream.URL
 	s := New(cfg, "test", "room-stale-test", false)
-	s.store(upstream.URL+"/api/v1/room/expired", []byte(`{"stream_url":"https://old.invalid/live.m3u8"}`), -time.Second)
+	s.store("kafei|"+upstream.URL+"/api/v1/room/expired", []byte(`{"stream_url":"https://old.invalid/live.m3u8"}`), -time.Second)
 	res := httptest.NewRecorder()
 	s.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/v1/room/expired", nil))
 
@@ -369,7 +369,7 @@ func TestRoomAndPlaybackRequestsRespectTimeouts(t *testing.T) {
 			if elapsed := time.Since(started); elapsed > time.Second {
 				t.Fatalf("request waited %s for a slow upstream", elapsed)
 			}
-			if res.Code != http.StatusBadGateway {
+			if res.Code != http.StatusGatewayTimeout {
 				t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
 			}
 		})

@@ -20,6 +20,8 @@
   var nativeUpdateTimer = null;
   var frameRevealTimer = null;
   var frameRevealToken = 0;
+  var activeFeedRequest = null;
+  var activeMoreRequest = null;
   if (window.KafeiTVApp) document.documentElement.classList.add('android-app');
   var paginationObserver = window.IntersectionObserver ? new IntersectionObserver(function (entries) {
     entries.forEach(function (entry) { if (entry.isIntersecting) loadMore(); });
@@ -29,7 +31,15 @@
   function api(path, callback) {
     var xhr = new XMLHttpRequest(); var finished = false; xhr.open('GET', path, true); xhr.timeout = 45000;
     function finish(error, value) { if (finished) return; finished = true; callback(error, value); }
-    xhr.onreadystatechange = function () { if (xhr.readyState !== 4) return; if (xhr.status >= 200 && xhr.status < 300) { try { finish(null, JSON.parse(xhr.responseText)); } catch (e) { finish(e); } } else finish(new Error('HTTP ' + xhr.status)); };
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+      if (xhr.status >= 200 && xhr.status < 300) { try { finish(null, JSON.parse(xhr.responseText)); } catch (e) { finish(e); } }
+      else {
+        var message = 'HTTP ' + xhr.status;
+        try { var response = JSON.parse(xhr.responseText); if (response && response.message) message = response.message; } catch (ignore) {}
+        finish(new Error(message));
+      }
+    };
     xhr.ontimeout = function () { finish(new Error('请求超时')); }; xhr.onerror = function () { finish(new Error('网络连接失败')); }; xhr.send(); return xhr;
   }
   function setVideoPlaceholder(message, loading) {
@@ -97,7 +107,7 @@
     }
     var index = state.room.signalIndex == null ? 0 : state.room.signalIndex;
     var signals = state.room.signals || [];
-    if (!signals.length) { setPlaybackError('没有可重试的直播线路', 'no signal'); return; }
+    if (!signals.length) { requestRoomDetails(state.room); return; }
     selectSignal(index, signals);
   }
   function cancelFrameReveal() {
@@ -133,7 +143,7 @@
   }
   function rows(response) { var data = response && response.data; return Array.isArray(data) ? data : data && Array.isArray(data.list) ? data.list : data && Array.isArray(data.rows) ? data.rows : []; }
   function totalCount(response) { var value = response && response.total; if (value == null && response && response.data && !Array.isArray(response.data)) value = response.data.total; if (value == null) return null; value = Number(value); return isFinite(value) && value >= 0 ? value : null; }
-  function get(path, params, callback) { var query = []; Object.keys(params).forEach(function (key) { query.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key])); }); api(path + (query.length ? '?' + query.join('&') : ''), callback); }
+  function get(path, params, callback) { var query = []; Object.keys(params).forEach(function (key) { query.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key])); }); return api(path + (query.length ? '?' + query.join('&') : ''), callback); }
   function imageURL(value, source) { if (!value) return ''; if (/^https?:\/\//i.test(value)) return value; var base = source === 'doubao' ? 'https://www.doubaozhibo.com' : 'https://kafeizhibo.cc'; return base + (value.charAt(0) === '/' ? value : '/' + value); }
   function text(item, key, fallback) { return item && item[key] != null ? item[key] : fallback || ''; }
   function homeTeam(item) { return text(item, 'home_team', item.homeTeam && item.homeTeam.name || '主队'); }
@@ -163,7 +173,7 @@
   }
   function normalizeMatchTitle(value) { return String(value == null ? '' : value).replace(/\s+vs\s+/gi, ' VS '); }
   function cardsFor(page, category, pageNumber, done, cursor) {
-    get('/api/v2/feed', { view: page, source: state.source, category: category, page: pageNumber, size: PAGE_SIZE, cursor: cursor || '' }, function (err, result) {
+    return get('/api/v2/feed', { view: page, source: state.source, category: category, page: pageNumber, size: PAGE_SIZE, cursor: cursor || '' }, function (err, result) {
       if (err) return done(err);
       var data = result && result.data || {};
       done(null, { items: Array.isArray(data.items) ? data.items : [], total: data.total == null ? null : Number(data.total), hasMore: !!data.hasMore, nextCursor: data.nextCursor || '', sources: result.sources || {} });
@@ -310,6 +320,8 @@
   function section(title, items, kind) { if (!items || !items.length) return title ? '<section class="feed-section" data-section-kind="' + kind + '"><div class="section-head"><h2 class="section-title">' + title + '</h2><span class="section-note">暂无内容</span></div><div class="card-grid" data-grid-kind="' + kind + '"></div></section>' : '<div class="state-panel"><div>暂无内容</div></div>'; var head = title ? '<div class="section-head"><h2 class="section-title">' + title + '</h2><span class="section-note">' + items.length + ' 场</span></div>' : ''; return '<section class="feed-section" data-section-kind="' + kind + '">' + head + '<div class="card-grid" data-grid-kind="' + kind + '">' + items.map(function (item) { return matchCard(item, kind); }).join('') + '</div></section>'; }
   function loadPage(restore) {
     var request = ++state.request; var previousFocus = restore || state.focused; var feedKey = state.page + ':' + state.category + ':' + state.source;
+    if (activeFeedRequest) { activeFeedRequest.abort(); activeFeedRequest = null; }
+    if (activeMoreRequest) { activeMoreRequest.abort(); activeMoreRequest = null; }
     if (paginationObserver) paginationObserver.disconnect();
     state.feeds[feedKey] = { page: 1, hasMore: false, total: null, loading: false, local: null, cursor: '' };
     pageTitle.textContent = pages[state.page][1];
@@ -324,8 +336,9 @@
       return;
     }
     renderState('正在加载', '正在获取赛事信息…', false);
-    cardsFor(state.page, state.category, 1, function (err, data) {
+    activeFeedRequest = cardsFor(state.page, state.category, 1, function (err, data) {
       if (request !== state.request) return;
+      activeFeedRequest = null;
       if (err) { setConnection(false); if (/HTTP 0|网络连接失败/.test(String(err.message || '')) && window.KafeiTVApp) renderCoreError('本地服务连接已断开，请重新连接。'); else renderState('内容加载失败', err.message || '请检查网络连接后重试。', true); return; }
       var sourceStates = data.sources || {}; var sourceNames = Object.keys(sourceStates); var sourceOK = sourceNames.some(function (name) { return sourceStates[name].status === 'ok' || sourceStates[name].status === 'stale'; });
       setConnection(sourceOK); setSourceHealth(sourceStates);
@@ -403,8 +416,10 @@
       feed.loading = false; updatePagination(feedKey); return;
     }
     var nextPage = feed.page + 1;
-    cardsFor(state.page, state.category, nextPage, function (err, data) {
-      if (state.page + ':' + state.category + ':' + state.source !== feedKey || state.feeds[feedKey] !== feed) return;
+    var request = state.request;
+    activeMoreRequest = cardsFor(state.page, state.category, nextPage, function (err, data) {
+      if (request !== state.request || state.page + ':' + state.category + ':' + state.source !== feedKey || state.feeds[feedKey] !== feed) return;
+      activeMoreRequest = null;
       feed.loading = false; feed.failed = false;
       if (err) { feed.hasMore = true; feed.failed = true; updatePagination(feedKey); showToast('加载失败，请按确认重试'); return; }
       setSourceHealth(data.sources || {});
@@ -546,7 +561,12 @@
     layer.onclick = function (e) { if (e.target === layer) closeRoom(); };
     layer.querySelector('[data-player-action="toggle"]').addEventListener('click', togglePlayback);
     layer.querySelector('[data-player-action="fullscreen"]').addEventListener('click', toggleFullscreen);
-    var roomState = state.room;
+    requestRoomDetails(state.room);
+    focusById('room-close');
+  }
+  function requestRoomDetails(roomState) {
+    layer.classList.remove('is-playback-error');
+    setVideoPlaceholder('正在获取' + (roomState.kind === 'replay' ? '回放' : '直播') + '线路…', true);
     get('/api/v2/room/' + encodeURIComponent(roomState.source) + '/' + encodeURIComponent(roomState.roomId), { kind: roomState.kind }, function (err, response) {
       if (state.room !== roomState) return;
       var data = response && response.data || {}; var signals = data.signals || data.streams || data.archors || [];
@@ -555,7 +575,6 @@
       renderSignals(signals, err, data);
       if (!err && roomState.kind !== 'replay' && !isRoomFinished(data)) startRoomStatusPolling(roomState);
     });
-    focusById('room-close');
   }
   function renderSignals(signals, err, roomData) {
     var list = document.getElementById('signal-list'); var panel = document.getElementById('signal-panel'); if (!list || !panel) return;

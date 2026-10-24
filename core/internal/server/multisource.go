@@ -43,6 +43,7 @@ type feedItem struct {
 type sourceState struct {
 	Status  string `json:"status"`
 	Message string `json:"message,omitempty"`
+	Code    int    `json:"code,omitempty"`
 	Count   int    `json:"count"`
 	Stale   bool   `json:"stale,omitempty"`
 }
@@ -267,7 +268,14 @@ func (s *Server) aggregateFeed(w http.ResponseWriter, r *http.Request) {
 		response.Success = false
 		response.Code = http.StatusBadGateway
 		response.Message = "所有直播来源暂时不可用"
-		writeJSON(w, http.StatusBadGateway, response)
+		if len(sources) == 1 {
+			state := response.Sources[sources[0]]
+			response.Message = state.Message
+			if state.Code != 0 {
+				response.Code = state.Code
+			}
+		}
+		writeJSON(w, response.Code, response)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -367,7 +375,8 @@ func (s *Server) fetchFeed(r *http.Request, source, view, category string, page,
 	}
 	body, stale, err := s.fetchSource(feedCtx, source, requestPath, query, cacheable)
 	if err != nil {
-		result.State = sourceState{Status: "error", Message: source + ": " + err.Error()}
+		code, message := upstreamFailure(source, err)
+		result.State = sourceState{Status: "error", Message: message, Code: code}
 		return result
 	}
 	var envelope map[string]interface{}
@@ -381,11 +390,16 @@ func (s *Server) fetchFeed(r *http.Request, source, view, category string, page,
 	}
 	result.Items, result.Total, result.HasMore, result.NextCursor = normalizeFeed(source, view, envelope)
 	if scheduleMetadata != nil {
+		// Scores and logos enrich usable live cards; they must not hold the
+		// primary list behind a separate slow schedule request.
+		grace := time.NewTimer(200 * time.Millisecond)
 		select {
 		case schedules := <-scheduleMetadata:
 			enrichDoubaoRoomItems(result.Items, schedules)
+		case <-grace.C:
 		case <-feedCtx.Done():
 		}
+		grace.Stop()
 	}
 	if source == "kafei" && (view == "home" || view == "live") {
 		total := len(result.Items)
@@ -427,45 +441,46 @@ func (s *Server) fetchSource(ctx context.Context, source, requestPath string, qu
 		if body, ok := s.cached(key); ok {
 			return body, false, nil
 		}
+		if body, ok := s.stale(key); ok {
+			s.refreshMetadata(key, source, requestPath, query)
+			return body, true, nil
+		}
 	}
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		req, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, fullPath, nil)
-		if requestErr != nil {
-			lastErr = requestErr
-			break
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullPath, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 Chrome/120 Safari/537.36")
+	if source == "doubao" {
+		req.Header.Set("Referer", strings.TrimRight(base, "/")+"/")
+	}
+	resp, lastErr := client.Do(req)
+	if lastErr == nil {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamBody+1))
+		_ = resp.Body.Close()
+		if readErr == nil && len(body) > maxUpstreamBody {
+			readErr = errors.New("upstream response too large")
 		}
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 Chrome/120 Safari/537.36")
-		if source == "doubao" {
-			req.Header.Set("Referer", strings.TrimRight(base, "/")+"/")
+		if readErr == nil && resp.StatusCode >= 200 && resp.StatusCode <= 299 && !json.Valid(body) {
+			readErr = errors.New("invalid upstream JSON")
 		}
-		resp, requestErr := client.Do(req)
-		if requestErr == nil {
-			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-			_ = resp.Body.Close()
-			if readErr == nil && resp.StatusCode >= 200 && resp.StatusCode <= 299 {
-				if cacheable {
-					s.store(key, body, 20*time.Second)
+		if readErr == nil && resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+			if source == "doubao" {
+				var envelope map[string]interface{}
+				if json.Unmarshal(body, &envelope) == nil && envelope["success"] == false {
+					return nil, false, errors.New("upstream API rejected request")
 				}
-				return body, false, nil
 			}
-			if readErr != nil {
-				lastErr = readErr
-			} else {
-				lastErr = fmt.Errorf("upstream status %d", resp.StatusCode)
+			if cacheable {
+				s.store(key, body, 30*time.Second)
 			}
-		} else {
-			lastErr = requestErr
+			return body, false, nil
 		}
-		if attempt == 0 {
-			timer := time.NewTimer(250 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil, false, ctx.Err()
-			case <-timer.C:
-			}
+		if readErr != nil {
+			lastErr = readErr
+		} else {
+			lastErr = fmt.Errorf("upstream status %d", resp.StatusCode)
 		}
 	}
 	if cacheable {
@@ -474,6 +489,34 @@ func (s *Server) fetchSource(ctx context.Context, source, requestPath string, qu
 		}
 	}
 	return nil, false, lastErr
+}
+
+// Navigation can use recently fetched real metadata immediately. At most one
+// bounded refresh per cache key runs in the background; playback is excluded.
+func (s *Server) refreshMetadata(key, source, requestPath string, query url.Values) {
+	s.mu.Lock()
+	if s.refreshing == nil {
+		s.refreshing = make(map[string]bool)
+	}
+	if s.refreshing[key] {
+		s.mu.Unlock()
+		return
+	}
+	s.refreshing[key] = true
+	s.mu.Unlock()
+	queryCopy := url.Values{}
+	for name, values := range query {
+		queryCopy[name] = append([]string(nil), values...)
+	}
+	go func() {
+		defer func() { s.mu.Lock(); delete(s.refreshing, key); s.mu.Unlock() }()
+		ctx, cancel := context.WithTimeout(context.Background(), s.feedTimeout)
+		defer cancel()
+		body, _, err := s.fetchSource(ctx, source, requestPath, queryCopy, false)
+		if err == nil {
+			s.store(key, body, 30*time.Second)
+		}
+	}()
 }
 
 func (s *Server) sourceClient(source string) (string, *http.Client, error) {
@@ -714,7 +757,7 @@ func (s *Server) unifiedRoom(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	body, stale, err := s.fetchSource(ctx, source, requestPath, url.Values{}, false)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		writeUpstreamError(w, source, err)
 		return
 	}
 	var envelope map[string]interface{}
@@ -764,7 +807,7 @@ func (s *Server) resolvePlayback(w http.ResponseWriter, r *http.Request) {
 	if source == "kafei" {
 		room, err := s.roomData(ctx, source, id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			writeUpstreamError(w, source, err)
 			return
 		}
 		signals := normalizeKafeiSignals(room)
@@ -785,7 +828,7 @@ func (s *Server) resolvePlayback(w http.ResponseWriter, r *http.Request) {
 	}
 	body, _, err := s.fetchSource(ctx, source, requestPath, url.Values{}, false)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		writeUpstreamError(w, source, err)
 		return
 	}
 	var envelope map[string]interface{}

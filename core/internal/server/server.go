@@ -3,8 +3,6 @@ package server
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -28,6 +26,7 @@ type Server struct {
 	playbackTimeout   time.Duration
 	mu                sync.RWMutex
 	metadata          map[string]cachedResponse
+	refreshing        map[string]bool
 }
 
 type cachedResponse struct {
@@ -37,7 +36,7 @@ type cachedResponse struct {
 }
 
 func New(cfg product.Config, version, instance string, fixture bool) *Server {
-	return &Server{cfg: cfg, version: version, instance: instance, fixture: fixture, updateProxies: []string{"https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.com/"}, client: &http.Client{Timeout: 20 * time.Second}, doubaoClient: &http.Client{Timeout: 20 * time.Second}, feedTimeout: 10 * time.Second, roomTimeout: 10 * time.Second, playbackTimeout: 10 * time.Second, metadata: make(map[string]cachedResponse)}
+	return &Server{cfg: cfg, version: version, instance: instance, fixture: fixture, updateProxies: []string{"https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.com/"}, client: newUpstreamClient(), doubaoClient: newUpstreamClient(), feedTimeout: 6 * time.Second, roomTimeout: 6 * time.Second, playbackTimeout: 6 * time.Second, metadata: make(map[string]cachedResponse)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -93,91 +92,15 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, fixtureResponse(r.URL.Path, r.URL.Query()))
 		return
 	}
-	path, err := upstreamURL(s.cfg.Upstream, r.URL.Path, r.URL.Query())
-	if err != nil {
-		http.Error(w, "invalid upstream", http.StatusBadGateway)
-		return
-	}
-	key := path
-	// Metadata may be reused briefly during navigation; room responses contain
-	// expiring playback URLs and are deliberately never cached.
+	// Use the same bounded transport and cache rules as the v2 adapters.
 	cacheable := !strings.Contains(r.URL.Path, "/room/") && !strings.Contains(r.URL.Path, "/match/")
-	if cacheable {
-		if body, ok := s.cached(key); ok {
-			writeRawJSON(w, body)
-			return
-		}
-	}
-	var resp *http.Response
-	for attempt := 0; attempt < 2; attempt++ {
-		req, requestErr := http.NewRequestWithContext(r.Context(), http.MethodGet, path, nil)
-		if requestErr != nil {
-			err = requestErr
-			break
-		}
-		req.Header.Set("Accept", "application/json")
-		resp, err = s.client.Do(req)
-		if err == nil && resp.StatusCode < http.StatusInternalServerError {
-			break
-		}
-		if attempt == 1 {
-			break
-		}
-		if resp != nil {
-			_ = resp.Body.Close()
-			resp = nil
-		}
-		backoff := time.Duration(300*(attempt+1)) * time.Millisecond
-		timer := time.NewTimer(backoff)
-		select {
-		case <-r.Context().Done():
-			timer.Stop()
-			err = r.Context().Err()
-			attempt++
-		case <-timer.C:
-		}
-	}
+	body, stale, err := s.fetchSource(r.Context(), "kafei", r.URL.Path, r.URL.Query(), cacheable)
 	if err != nil {
-		if cacheable {
-			if body, ok := s.stale(key); ok {
-				w.Header().Set("X-KafeiTV-Cache", "stale")
-				writeRawJSON(w, body)
-				return
-			}
-		}
-		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+		writeUpstreamError(w, "kafei", err)
 		return
 	}
-	if resp == nil {
-		http.Error(w, "upstream unavailable", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if readErr != nil {
-		if cacheable {
-			if cachedBody, ok := s.stale(key); ok {
-				w.Header().Set("X-KafeiTV-Cache", "stale")
-				writeRawJSON(w, cachedBody)
-				return
-			}
-		}
-		http.Error(w, "upstream read failed", http.StatusBadGateway)
-		return
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		if cacheable && resp.StatusCode >= http.StatusInternalServerError {
-			if cachedBody, ok := s.stale(key); ok {
-				w.Header().Set("X-KafeiTV-Cache", "stale")
-				writeRawJSON(w, cachedBody)
-				return
-			}
-		}
-		http.Error(w, fmt.Sprintf("upstream status %d", resp.StatusCode), http.StatusBadGateway)
-		return
-	}
-	if cacheable {
-		s.store(key, body, 30*time.Second)
+	if stale {
+		w.Header().Set("X-KafeiTV-Cache", "stale")
 	}
 	writeRawJSON(w, body)
 }
