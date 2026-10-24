@@ -112,10 +112,12 @@
   function formatLocalMatchTime(value) {
     if (!value) return '';
     var raw = String(value);
+    function pad(number) { return number < 10 ? '0' + number : String(number); }
+    var chineseDate = raw.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日(?:\s+(\d{1,2}):(\d{2}))?/);
+    if (chineseDate) return chineseDate[1] + '-' + pad(chineseDate[2]) + '-' + pad(chineseDate[3]) + (chineseDate[4] ? ' ' + pad(chineseDate[4]) + ':' + chineseDate[5] : '');
     if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) return raw.replace('T', ' ').slice(0, 16);
     var date = new Date(raw);
     if (isNaN(date.getTime())) return raw;
-    function pad(number) { return number < 10 ? '0' + number : String(number); }
     return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
   }
   function watchTeamLogos(root) {

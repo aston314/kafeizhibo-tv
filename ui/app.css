@@ -88,7 +88,7 @@ h1 { margin:0; font-size:1.7em; line-height:1.1; font-weight:700; letter-spacing
 .card-grid > .match-card { flex:none; width:calc(25% - 1.05em); margin:.5em; }
 .match-card { display:block; width:100%; min-width:0; padding:0; border:0; border-radius:.8em; overflow:hidden; background:#181d20; text-align:left; }
 .card-grid .match-card:focus, .card-grid .match-card:hover { outline:0; box-shadow:0 0 0 3px #0f1214, 0 0 0 6px #ff7a1a, 0 0 1.2em rgba(255,122,26,.5); }
-.card-art { position:relative; height:0; padding-top:56.25%; overflow:hidden; background-color:#1c3a2a; background-size:cover; background-position:center; }
+.card-art { position:relative; height:0; padding-top:56.25%; overflow:hidden; border-radius:.8em .8em 0 0; background-clip:padding-box; background-color:#1c3a2a; background-size:cover; background-position:center; }
 .card-art:after { content:""; position:absolute; left:0; right:0; bottom:0; height:45%; background:linear-gradient(transparent,rgba(0,0,0,.7)); }
 .card-art[data-sport="篮球"] { background-color:#4a2e1b; }
 .card-art[data-sport="网球"] { background-color:#1e3f5a; }
