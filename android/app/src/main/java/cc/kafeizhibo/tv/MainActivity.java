@@ -19,10 +19,12 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import androidx.media3.common.util.UnstableApi;
 import org.json.JSONObject;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
+@UnstableApi
 public final class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private FrameLayout root; private StartupView startup; private WebView web; private AppUpdater updater; private NativePlayerController nativePlayer; private boolean ready, destroyed, confirming; private int generation;
