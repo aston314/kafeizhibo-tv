@@ -37,6 +37,7 @@ public final class MainActivity extends Activity {
             if (value == null || !(value.startsWith("https://") || value.startsWith("http://"))) return;
             try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(value))); } catch (Exception ignored) { }
         }
+        @JavascriptInterface public void restartCore() { handler.post(new Runnable() { public void run() { restart(); } }); }
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event) { if (ready && web != null && event.getAction() == KeyEvent.ACTION_DOWN) { int code = event.getKeyCode(); if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT || code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER) { web.evaluateJavascript("window.MingmingTVKey&&window.MingmingTVKey(" + code + ");", null); return true; } } return super.dispatchKeyEvent(event); }
     @Override public void onBackPressed() { if (!ready || web == null) { confirmExit(); return; } web.evaluateJavascript("window.MingmingTVBack?window.MingmingTVBack():false", new ValueCallback<String>() { public void onReceiveValue(String value) { if (!"true".equals(value)) confirmExit(); } }); }

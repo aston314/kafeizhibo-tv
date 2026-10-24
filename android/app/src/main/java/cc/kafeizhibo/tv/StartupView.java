@@ -29,21 +29,21 @@ final class StartupView extends LinearLayout {
 
         FrameLayout logoBlock = new FrameLayout(context);
         logoBlock.setFocusable(false);
-        addView(logoBlock, new LayoutParams(dp(152), dp(152)));
+        addView(logoBlock, new LayoutParams(dp(136), dp(136)));
 
         ring = new ImageView(context);
         ring.setImageResource(R.drawable.startup_ring);
         ring.setScaleType(ImageView.ScaleType.FIT_CENTER);
         ring.setFocusable(false);
         ring.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        logoBlock.addView(ring, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
+        logoBlock.addView(ring, new FrameLayout.LayoutParams(dp(120), dp(120), Gravity.CENTER));
 
         ImageView logo = new ImageView(context);
         logo.setImageResource(R.drawable.ic_launcher);
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
         logo.setFocusable(false);
         logo.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        logoBlock.addView(logo, new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.CENTER));
+        logoBlock.addView(logo, new FrameLayout.LayoutParams(dp(68), dp(68), Gravity.CENTER));
 
         ringRotation = new RotateAnimation(0, 360, Animation.RELATIVE_TO_SELF, 0.5f, Animation.RELATIVE_TO_SELF, 0.5f);
         ringRotation.setDuration(1100);
