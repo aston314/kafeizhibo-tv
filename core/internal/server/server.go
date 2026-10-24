@@ -80,7 +80,7 @@ func serveUI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) health(w http.ResponseWriter) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ready": true, "version": s.version, "instanceId": s.instance, "capabilities": map[string]bool{"fixture": s.fixture, "member": false, "playback": true}})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ready": true, "version": s.version, "versionCode": s.cfg.VersionCode, "instanceId": s.instance, "capabilities": map[string]bool{"fixture": s.fixture, "member": false, "playback": true}})
 }
 
 func (s *Server) api(w http.ResponseWriter, r *http.Request) {

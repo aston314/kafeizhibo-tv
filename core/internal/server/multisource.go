@@ -79,6 +79,8 @@ func (s *Server) apiV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.URL.Path == "/api/v2/update":
+		s.checkForUpdate(w, r)
 	case r.URL.Path == "/api/v2/feed":
 		s.aggregateFeed(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/v2/room/"):
@@ -88,6 +90,60 @@ func (s *Server) apiV2(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (s *Server) checkForUpdate(w http.ResponseWriter, r *http.Request) {
+	manifestURL := strings.TrimSpace(s.cfg.UpdateManifest)
+	if manifestURL == "" {
+		http.Error(w, "update manifest is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if s.fixture {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "code": 0, "data": map[string]interface{}{"schema": 1, "package_name": s.cfg.ApplicationID, "version_code": s.cfg.VersionCode, "version_name": s.cfg.VersionName, "release_notes": "fixture"}})
+		return
+	}
+	cacheKey := "update-manifest|" + manifestURL
+	if body, ok := s.cached(cacheKey); ok {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "code": 0, "data": json.RawMessage(body)})
+		return
+	}
+	parsed, err := url.Parse(manifestURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		http.Error(w, "invalid update manifest URL", http.StatusBadGateway)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
+	if err != nil {
+		http.Error(w, "invalid update manifest request", http.StatusBadGateway)
+		return
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		if body, staleOK := s.stale(cacheKey); staleOK {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "code": 0, "stale": true, "data": json.RawMessage(body)})
+			return
+		}
+		http.Error(w, "update manifest unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil || resp.StatusCode < 200 || resp.StatusCode > 299 || !json.Valid(body) {
+		http.Error(w, "invalid update manifest", http.StatusBadGateway)
+		return
+	}
+	var manifest struct {
+		PackageName string `json:"package_name"`
+	}
+	if json.Unmarshal(body, &manifest) != nil || manifest.PackageName != s.cfg.ApplicationID {
+		http.Error(w, "update package mismatch", http.StatusBadGateway)
+		return
+	}
+	s.store(cacheKey, body, 5*time.Minute)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "code": 0, "data": json.RawMessage(body)})
 }
 
 func (s *Server) aggregateFeed(w http.ResponseWriter, r *http.Request) {

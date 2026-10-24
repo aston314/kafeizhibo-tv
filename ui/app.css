@@ -64,6 +64,21 @@ h1 { margin:0; font-size:1.7em; line-height:1.1; font-weight:700; letter-spacing
 .support-close:focus, .support-close:hover { outline:0; box-shadow:0 0 0 2px #0f1214, 0 0 0 5px #ff7a1a; }
 .support-modal-panel img { display:block; width:25em; max-width:80vw; max-height:72vh; margin:1em auto; object-fit:contain; background:#fff; }
 .support-modal-panel p { margin:.25em 0 0; color:#aeb7ba; }
+.settings-page { max-width:48em; min-height:100%; padding:1.2em .35em 3em; }
+.settings-card { max-width:42em; margin:1.2em auto; padding:1.3em 1.5em; border:1px solid #2a3236; border-radius:.8em; background:#181d20; }
+.settings-card h2 { margin:0 0 .7em; font-size:1.25em; }
+.settings-row { display:flex; align-items:center; justify-content:space-between; min-height:3.2em; border-top:1px solid #2a3236; color:#aeb7ba; }
+.settings-row strong { color:#f1f3f2; font-size:1.05em; }
+.settings-action { margin-top:1em; padding:.65em 1.1em; border:0; border-radius:.35em; background:#ff7a1a; color:#1a0d02; font-weight:700; }
+.settings-action:disabled { opacity:.6; }
+.settings-action:focus, .settings-action:hover { outline:0; box-shadow:0 0 0 3px #0f1214, 0 0 0 6px #ff7a1a, 0 0 1.2em rgba(255,122,26,.5); }
+.settings-status { min-height:2.6em; margin-top:1em; color:#aeb7ba; line-height:1.5; white-space:pre-line; }
+.settings-status.is-success { color:#9ed8a4; }
+.settings-status.is-update { color:#ffd18a; }
+.settings-status.is-error { color:#f4a19a; }
+.settings-download { display:none; margin-top:.8em; padding:.6em 1em; border:0; border-radius:.35em; background:#263237; color:#f1f3f2; font-weight:700; }
+.settings-download.is-visible { display:inline-block; }
+.settings-download:focus, .settings-download:hover { outline:0; box-shadow:0 0 0 3px #0f1214, 0 0 0 6px #ff7a1a; }
 .section-spacer { height:.4em; }
 .section-head { display:flex; align-items:center; justify-content:space-between; margin:1.5em 0 .75em; }
 .section-title { margin:0; color:#aeb7ba; font-size:1.1em; font-weight:700; }

@@ -3,9 +3,9 @@
   if (!NodeList.prototype.forEach) NodeList.prototype.forEach = Array.prototype.forEach;
   var categories = [{ id: 'all', label: '全部' }, { id: 'hot', label: '热门' }, { id: '1', label: '足球' }, { id: '2', label: '篮球' }, { id: '3', label: '网球' }, { id: '19', label: '台球' }];
   var sources = [{ id: 'all', label: '全部来源' }, { id: 'kafei', label: '咖啡直播' }, { id: 'doubao', label: '豆包直播' }];
-  var pages = { home: ['首页', '首页'], live: ['全部直播', '全部直播'], schedule: ['赛程', '赛程'], replay: ['录像回放', '录像回放'], support: ['打赏', '打赏'] };
+  var pages = { home: ['首页', '首页'], live: ['全部直播', '全部直播'], schedule: ['赛程', '赛程'], replay: ['录像回放', '录像回放'], support: ['打赏', '打赏'], settings: ['设置', '设置'] };
   var PAGE_SIZE = 12;
-  var state = { page: 'home', category: 'all', source: 'all', request: 0, cards: [], room: null, focused: null, hls: null, feeds: {}, loadingMore: false, supportModal: false, supportPrevious: null };
+  var state = { page: 'home', category: 'all', source: 'all', request: 0, cards: [], room: null, focused: null, hls: null, feeds: {}, loadingMore: false, supportModal: false, supportPrevious: null, appVersion: '', appVersionCode: 0, update: null };
   var content = document.getElementById('page-content');
   var mainArea = document.querySelector('.main-area');
   var layer = document.getElementById('room-layer');
@@ -128,6 +128,55 @@
     modal.querySelector('[data-focus="support-close"]').addEventListener('click', closeSupportModal);
     if (!focusById(previousFocus || 'support-wechat')) focusById('support-wechat');
   }
+  function settingsMarkup() {
+    return '<section class="settings-page" aria-labelledby="settings-title"><div class="settings-card"><h2 id="settings-title">应用设置</h2><div class="settings-row"><span>当前版本</span><strong id="settings-version">' + escapeHTML(state.appVersion || '读取中…') + '</strong></div><button class="settings-action focusable" data-action="check-update" data-focus="settings-check">检查版本更新</button><div id="settings-status" class="settings-status" aria-live="polite">可手动检查新版本</div><button id="settings-download" class="settings-download focusable" data-action="download-update" data-focus="settings-download">打开下载页面</button></div></section>';
+  }
+  function setSettingsStatus(message, kind) {
+    var status = document.getElementById('settings-status'); if (!status) return;
+    status.className = 'settings-status' + (kind ? ' is-' + kind : '');
+    status.textContent = message;
+  }
+  function renderSettingsPage(previousFocus) {
+    if (paginationObserver) paginationObserver.disconnect();
+    categorySlot.innerHTML = '';
+    content.innerHTML = settingsMarkup();
+    var check = content.querySelector('[data-action="check-update"]');
+    var download = content.querySelector('[data-action="download-update"]');
+    if (check) check.addEventListener('click', checkForUpdate);
+    if (download) download.addEventListener('click', openUpdateDownload);
+    if (!focusById(previousFocus && previousFocus.indexOf('settings-') === 0 ? previousFocus : 'settings-check')) focusById('settings-check');
+    api('/health', function (err, health) {
+      if (err || !health) return;
+      state.appVersion = String(health.version || state.appVersion || '');
+      state.appVersionCode = Number(health.versionCode || state.appVersionCode || 0);
+      var version = document.getElementById('settings-version'); if (version) version.textContent = state.appVersion || '未知';
+    });
+  }
+  function checkForUpdate() {
+    var button = document.querySelector('[data-action="check-update"]');
+    var download = document.querySelector('[data-action="download-update"]');
+    if (button) { button.disabled = true; button.textContent = '正在检查…'; }
+    if (download) { download.classList.remove('is-visible'); state.update = null; }
+    setSettingsStatus('正在检查版本信息…', '');
+    api('/api/v2/update', function (err, response) {
+      if (button) { button.disabled = false; button.textContent = '重新检查'; }
+      if (err || !response || !response.data) { setSettingsStatus('检查失败，请稍后重试。', 'error'); return; }
+      var manifest = response.data;
+      var latestCode = Number(manifest.version_code || 0); var currentCode = Number(state.appVersionCode || 0);
+      if (manifest.package_name && manifest.package_name !== 'cc.kafeizhibo.tv') { setSettingsStatus('更新包与当前应用不匹配。', 'error'); return; }
+      if (latestCode <= currentCode) { setSettingsStatus('当前已是最新版本（' + (state.appVersion || manifest.version_name || '未知') + '）。', 'success'); return; }
+      state.update = manifest;
+      var note = manifest.release_notes ? '\n' + manifest.release_notes : '';
+      setSettingsStatus('发现新版本 ' + (manifest.version_name || latestCode) + note, 'update');
+      if (download && manifest.download_url) download.classList.add('is-visible');
+    });
+  }
+  function openUpdateDownload() {
+    var manifest = state.update; var url = manifest && manifest.download_url;
+    if (!url) return;
+    if (window.KafeiTVApp && typeof window.KafeiTVApp.openUrl === 'function') window.KafeiTVApp.openUrl(url);
+    else window.open(url, '_blank');
+  }
   function openSupportModal(card) {
     var modal = document.getElementById('support-modal'); if (!modal) return;
     state.supportPrevious = card.getAttribute('data-focus'); state.supportModal = true;
@@ -169,6 +218,10 @@
     navButtons.forEach(function (button) { button.classList.toggle('is-active', button.getAttribute('data-page') === state.page); });
     if (state.page === 'support') {
       renderSupportPage(previousFocus);
+      return;
+    }
+    if (state.page === 'settings') {
+      renderSettingsPage(previousFocus);
       return;
     }
     renderState('正在加载', '正在获取赛事信息…', false);
@@ -322,11 +375,19 @@
       else if (direction === 'ArrowDown' && navIndex < navButtons.length - 1) focusTarget(navButtons[navIndex + 1]);
       else if (direction === 'ArrowRight') {
         if (state.page === 'support') { focusById('support-wechat'); return; }
+        if (state.page === 'settings') { focusById('settings-check'); return; }
         var firstCard = content.querySelector('.match-card');
         if (firstCard) { focusTarget(firstCard); state.focused = firstCard.getAttribute('data-focus'); return; }
         if (focusById('source-' + state.source)) return;
         focusById('cat-' + state.category);
       }
+      return;
+    }
+    if (current.classList.contains('settings-action') || current.classList.contains('settings-download')) {
+      var settingsTargets = Array.prototype.slice.call(content.querySelectorAll('.settings-action, .settings-download.is-visible'));
+      var settingsNext = spatialTarget(current, settingsTargets, direction);
+      if (settingsNext) { focusTarget(settingsNext); return; }
+      if (direction === 'ArrowLeft' || direction === 'ArrowUp') focusById('nav-settings');
       return;
     }
     if (current.classList.contains('support-card')) {
@@ -588,5 +649,5 @@
   window.MingmingTVBack = function () { if (state.room) { closeRoom(); return true; } if (state.supportModal) { closeSupportModal(); return true; } return false; };
   window.MingmingTVBackground = function () { var video = document.getElementById('room-video'); if (video) video.pause(); };
   window.MingmingTVForeground = function () { };
-  window.addEventListener('load', function () { api('/health', function (err, health) { setConnection(!err && health.ready); }); loadPage('card-'); });
+  window.addEventListener('load', function () { api('/health', function (err, health) { setConnection(!err && health.ready); if (!err && health) { state.appVersion = String(health.version || ''); state.appVersionCode = Number(health.versionCode || 0); } }); loadPage('card-'); });
 }());
