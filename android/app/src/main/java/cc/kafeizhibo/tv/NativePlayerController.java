@@ -44,7 +44,7 @@ final class NativePlayerController {
         root.addView(playerView, 0, new FrameLayout.LayoutParams(-1, -1));
     }
 
-    Object bridge() { return new Bridge(); }
+    Bridge bridge() { return new Bridge(); }
 
     void pause() {
         main.post(new Runnable() { @Override public void run() {
