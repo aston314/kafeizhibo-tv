@@ -40,5 +40,9 @@ android {
 
 dependencies {
     implementation "androidx.core:core:1.8.0"
+    def media3_version = product.media3Version ?: "1.11.1"
+    implementation "androidx.media3:media3-exoplayer:$media3_version"
+    implementation "androidx.media3:media3-exoplayer-hls:$media3_version"
+    implementation "androidx.media3:media3-ui:$media3_version"
     testImplementation "junit:junit:4.13.2"
 }

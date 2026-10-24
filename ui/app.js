@@ -41,6 +41,7 @@
   }
   function setPlaybackError(message, error) {
     if (state.room) state.room.lastError = error || message;
+    if (state.room && state.room.native) setNativePlaybackActive(false);
     var placeholder = document.getElementById('video-placeholder'); if (!placeholder) return;
     layer.classList.remove('is-loading', 'is-buffering');
     layer.classList.add('is-playback-error');
@@ -49,6 +50,36 @@
     placeholder.insertAdjacentHTML('beforeend', '<button class="player-retry focusable" data-action="retry-playback" data-focus="player-retry">重试线路</button>');
     var retry = placeholder.querySelector('[data-action="retry-playback"]');
     if (retry) retry.addEventListener('click', retryPlayback);
+  }
+  function setNativePlaybackActive(active) {
+    document.documentElement.classList.toggle('native-playback-active', !!active);
+  }
+  function handleNativePlaybackEvent(event, detail) {
+    if (!state.room || !state.room.native) return;
+    if (event === 'buffering') {
+      state.room.playing = false;
+      layer.classList.add('is-buffering');
+      setVideoPlaceholder('正在缓冲…', true);
+      showPlayerControls();
+    } else if (event === 'playing') {
+      state.room.playing = true;
+      layer.classList.remove('is-loading', 'is-buffering', 'is-playback-error');
+      var placeholder = document.getElementById('video-placeholder'); if (placeholder) placeholder.hidden = true;
+      updatePlayerControl();
+      showPlayerControls();
+    } else if (event === 'paused') {
+      state.room.playing = false;
+      layer.classList.remove('is-buffering');
+      updatePlayerControl();
+      showPlayerControls();
+    } else if (event === 'ended') {
+      showPlaybackEnded(state.room.kind === 'live' ? '直播已结束' : '播放已结束');
+    } else if (event === 'error') {
+      state.room.playing = false;
+      setNativePlaybackActive(false);
+      setPlaybackError(state.room.kind === 'replay' ? '回放加载失败，请尝试其他线路' : '直播流中断，请尝试其他线路', detail || '原生播放器错误');
+      focusById('player-retry');
+    }
   }
   function retryPlayback() {
     if (!state.room) return;
@@ -492,7 +523,7 @@
   function openRoom(card) {
     var room = card.getAttribute('data-room'); var match = card.getAttribute('data-match'); var source = card.getAttribute('data-source') || 'kafei'; var title = card.getAttribute('data-title'); var kind = card.getAttribute('data-kind');
     var roomLabel = kind === 'replay' ? '回放' : '直播';
-    state.focused = card.getAttribute('data-focus'); state.room = { title: title, previous: state.focused, card: card, roomId: room || match, matchId: match, source: source, kind: kind, signals: [], signalIndex: 0, lastError: '', playing: false, ended: false };
+    state.focused = card.getAttribute('data-focus'); state.room = { title: title, previous: state.focused, card: card, roomId: room || match, matchId: match, source: source, kind: kind, signals: [], signalIndex: 0, lastError: '', playing: false, native: false, ended: false };
     layer.hidden = false;
     layer.classList.remove('is-controls-hidden', 'is-fullscreen', 'is-ended', 'is-buffering', 'is-playback-error');
     layer.classList.add('is-loading');
@@ -575,6 +606,7 @@
   }
   function showPlaybackEnded(message) {
     if (!state.room) return;
+    if (state.room.native) setNativePlaybackActive(false);
     cancelFrameReveal();
     state.room.playing = false; state.room.ended = true;
     if (roomStatusTimer) window.clearInterval(roomStatusTimer);
@@ -619,13 +651,14 @@
   }
   function togglePlayback() {
     var video = document.getElementById('room-video'); if (!video || (state.room && state.room.ended)) return;
+    if (state.room && state.room.native && window.KafeiTVPlayer && typeof window.KafeiTVPlayer.toggle === 'function') { window.KafeiTVPlayer.toggle(); return; }
     if (video.paused) requestVideoPlayback(video);
     else { video.pause(); showToast('已暂停'); }
     updatePlayerControl();
   }
   function updatePlayerControl() {
     var video = document.getElementById('room-video'); var button = document.getElementById('player-toggle'); if (!video || !button) return;
-    var ended = !!(state.room && state.room.ended); var playing = !ended && !video.paused && !video.ended;
+    var ended = !!(state.room && state.room.ended); var playing = !ended && (state.room && state.room.native ? state.room.playing : !video.paused && !video.ended);
     var icon = document.getElementById('player-icon');
     if (icon) icon.innerHTML = '<use xlink:href="#icon-' + (playing ? 'pause' : 'play') + '"></use>';
     button.setAttribute('aria-label', ended ? '直播已结束' : playing ? '暂停' : '播放');
@@ -655,7 +688,7 @@
     state.room.ended = false; layer.classList.remove('is-ended');
     var video = document.getElementById('room-video'); var placeholder = document.getElementById('video-placeholder');
     cancelFrameReveal(); layer.classList.remove('is-playback-error'); setVideoPlaceholder('正在连接直播源…', true);
-    if (window.KafeiTVPlayer && typeof window.KafeiTVPlayer.open === 'function') { window.KafeiTVPlayer.open(url, state.room.title); setVideoPlaceholder('正在电视播放器中打开…', true); return; }
+    if (window.KafeiTVPlayer && typeof window.KafeiTVPlayer.open === 'function') { state.room.native = true; setNativePlaybackActive(true); window.KafeiTVPlayer.open(url, state.room.title); setVideoPlaceholder('正在电视播放器中打开…', true); return; }
     if (state.hls && state.hls.destroy) { state.hls.destroy(); state.hls = null; }
     video.pause(); video.removeAttribute('src'); video.load();
     video.onerror = function () { handlePlaybackFailure(video, video.error || null); };
@@ -673,7 +706,7 @@
     else { setPlaybackError('当前设备无法播放 HLS', 'HLS unsupported'); focusById('player-retry'); }
     if (!window.Hls && !hlsScriptRequested) { hlsScriptRequested = true; var script = document.createElement('script'); script.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js'; script.onload = function () { selectSignal(index, signals); }; script.onerror = function () { setPlaybackError('播放器加载失败', 'HLS script'); focusById('player-retry'); }; document.head.appendChild(script); }
   }
-  function closeRoom() { if (!state.room) return; cancelFrameReveal(); var previous = state.room.previous; var video = document.getElementById('room-video'); if (signalHideTimer) window.clearTimeout(signalHideTimer); if (controlsHideTimer) window.clearTimeout(controlsHideTimer); if (roomStatusTimer) window.clearInterval(roomStatusTimer); signalHideTimer = null; controlsHideTimer = null; roomStatusTimer = null; if (video) { video.pause(); video.removeAttribute('src'); video.load(); } if (state.hls && state.hls.destroy) state.hls.destroy(); state.hls = null; if (window.KafeiTVPlayer && window.KafeiTVPlayer.close) window.KafeiTVPlayer.close(); var exit = document.exitFullscreen || document.webkitExitFullscreen; if (fullscreenActive() && exit) { var exitRequest = exit.call(document); if (exitRequest && exitRequest.catch) exitRequest.catch(function () {}); } state.room = null; layer.classList.remove('is-controls-hidden', 'is-ended', 'is-playback-error'); layer.hidden = true; layer.innerHTML = ''; focusById(previous); }
+  function closeRoom() { if (!state.room) return; cancelFrameReveal(); var previous = state.room.previous; var video = document.getElementById('room-video'); if (signalHideTimer) window.clearTimeout(signalHideTimer); if (controlsHideTimer) window.clearTimeout(controlsHideTimer); if (roomStatusTimer) window.clearInterval(roomStatusTimer); signalHideTimer = null; controlsHideTimer = null; roomStatusTimer = null; if (video) { video.pause(); video.removeAttribute('src'); video.load(); } if (state.hls && state.hls.destroy) state.hls.destroy(); state.hls = null; if (window.KafeiTVPlayer && window.KafeiTVPlayer.close) window.KafeiTVPlayer.close(); setNativePlaybackActive(false); var exit = document.exitFullscreen || document.webkitExitFullscreen; if (fullscreenActive() && exit) { var exitRequest = exit.call(document); if (exitRequest && exitRequest.catch) exitRequest.catch(function () {}); } state.room = null; layer.classList.remove('is-controls-hidden', 'is-ended', 'is-playback-error'); layer.hidden = true; layer.innerHTML = ''; focusById(previous); }
   function enterPage(page) { if (!pages[page]) return; state.page = page; state.category = 'all'; state.focused = 'nav-' + page; loadPage(state.focused); }
   navButtons.forEach(function (button) { button.addEventListener('click', function () { enterPage(button.getAttribute('data-page')); }); });
   document.addEventListener('keydown', function (event) {
@@ -711,7 +744,8 @@
   document.addEventListener('webkitfullscreenchange', updateFullscreenControl);
   window.MingmingTVKey = function (code) { var keys = { 19: 'ArrowUp', 20: 'ArrowDown', 21: 'ArrowLeft', 22: 'ArrowRight', 23: 'Enter', 66: 'Enter', 4: 'Escape' }; var key = keys[code]; if (!key) return; var event = document.createEvent('Event'); event.initEvent('keydown', true, true); Object.defineProperty(event, 'key', { value: key }); document.dispatchEvent(event); };
   window.MingmingTVBack = function () { if (state.room) { closeRoom(); return true; } if (state.supportModal) { closeSupportModal(); return true; } return false; };
-  window.MingmingTVBackground = function () { var video = document.getElementById('room-video'); if (video) video.pause(); };
+  window.KafeiNativePlaybackEvent = handleNativePlaybackEvent;
+  window.MingmingTVBackground = function () { var video = document.getElementById('room-video'); if (video) video.pause(); if (window.KafeiTVPlayer && typeof window.KafeiTVPlayer.pause === 'function') window.KafeiTVPlayer.pause(); };
   window.KafeiTVResume = function () { readNativeUpdateStatus(); };
   window.MingmingTVForeground = function () { };
   window.addEventListener('load', function () { api('/health', function (err, health) { setConnection(!err && health.ready); if (!err && health) { state.appVersion = String(health.version || ''); state.appVersionCode = Number(health.versionCode || 0); } }); loadPage('card-'); });

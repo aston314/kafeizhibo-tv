@@ -10,7 +10,9 @@
   "abis": ["arm64-v8a", "armeabi-v7a", "x86_64"],
   "upstream": "https://kafeizhibo.cc",
   "doubaoUpstream": "https://www.doubaozhibo.com",
-  "playerAdapter": "webview-hls",
+  "playerAdapter": "media3-android-hls",
+  "media3Version": "1.11.1",
+  "browserPlayer": "html5-hls",
   "memberFeatures": false,
   "stage": "preview"
 }
