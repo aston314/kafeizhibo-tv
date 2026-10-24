@@ -4,5 +4,7 @@
   <string name="startup_retry">正在重新启动%1$s…</string>
   <string name="startup_error">%1$s启动失败，请点击重试</string>
   <string name="startup_page_error">界面加载失败，请点击重试</string>
+  <string name="connection_recovering">连接中断，正在重新连接…</string>
+  <string name="connection_failed">连接恢复失败，请按确认重试</string>
   <string name="startup_version">版本 %1$s</string>
 </resources>

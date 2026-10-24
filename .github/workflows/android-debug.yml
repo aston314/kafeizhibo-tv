@@ -51,6 +51,10 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
+      - name: Run Android unit tests and lint
+        working-directory: android
+        run: gradle --no-daemon test lint
+
       - name: Assemble debug APK
         working-directory: android
         run: gradle --no-daemon assembleDebug

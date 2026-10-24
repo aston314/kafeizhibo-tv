@@ -23,6 +23,7 @@
   var activeFeedRequest = null;
   var activeMoreRequest = null;
   var activeAllPager = null;
+  var coreRecoveryPending = false;
   if (window.KafeiTVApp) document.documentElement.classList.add('android-app');
   var paginationObserver = window.IntersectionObserver ? new IntersectionObserver(function (entries) {
     entries.forEach(function (entry) { if (entry.isIntersecting && nearFeedEnd()) loadMore(); });
@@ -78,6 +79,7 @@
       layer.classList.remove('is-loading', 'is-buffering', 'is-playback-error');
       var firstFramePlaceholder = document.getElementById('video-placeholder');
       if (firstFramePlaceholder) firstFramePlaceholder.hidden = true;
+      if (state.room.restorePaused && window.KafeiTVPlayer && typeof window.KafeiTVPlayer.pause === 'function') { state.room.restorePaused = false; window.KafeiTVPlayer.pause(); }
       updatePlayerControl();
       showPlayerControls();
     } else if (event === 'playing') {
@@ -103,7 +105,8 @@
     if (!state.room) return;
     var error = String(state.room.lastError || '');
     if (/HTTP 0|网络连接失败|请求超时/.test(error) && window.KafeiTVApp && typeof window.KafeiTVApp.restartCore === 'function') {
-      window.KafeiTVApp.restartCore();
+      if (requestCoreRecovery()) setVideoPlaceholder('连接中断，正在重新连接…', true);
+      else window.KafeiTVApp.restartCore();
       return;
     }
     var index = state.room.signalIndex == null ? 0 : state.room.signalIndex;
@@ -132,6 +135,7 @@
         if (!valid()) return;
         layer.classList.remove('is-loading', 'is-buffering', 'is-playback-error');
         placeholder.hidden = true;
+        if (state.room.restorePaused) { state.room.restorePaused = false; video.pause(); }
         updatePlayerControl();
         focusTarget(video);
         showPlayerControls();
@@ -182,10 +186,21 @@
   }
   function renderState(title, message, retry) { content.innerHTML = '<div class="state-panel">' + (title === '正在加载' ? '<div class="state-spinner" role="progressbar" aria-label="正在加载"></div>' : '') + '<div class="state-title">' + escapeHTML(title) + '</div><div>' + escapeHTML(message) + '</div>' + (retry ? '<button class="retry-button focusable" data-action="retry" data-focus="retry">重试</button>' : '') + '</div>'; if (retry) { var button = content.querySelector('[data-action="retry"]'); button.addEventListener('click', function () { loadPage(); }); focusById('retry'); } }
   function renderCoreError(message) {
-    content.innerHTML = '<div class="state-panel"><div class="state-title">应用核心连接中断</div><div>' + escapeHTML(message || '无法连接本地服务。') + '</div><button class="retry-button focusable" data-action="core-retry" data-focus="core-retry">重新连接</button></div>';
+    var automatic = window.KafeiTVApp && typeof window.KafeiTVApp.recoverCore === 'function';
+    content.innerHTML = '<div class="state-panel">' + (automatic ? '<div class="state-spinner" role="progressbar" aria-label="正在重新连接"></div>' : '') + '<div class="state-title">连接中断</div><div>' + escapeHTML(automatic ? '正在重新连接…' : message || '请按确认重新连接。') + '</div><button class="retry-button focusable" data-action="core-retry" data-focus="core-retry">重新连接</button></div>';
     var button = content.querySelector('[data-action="core-retry"]');
     if (button) button.addEventListener('click', function () { if (window.KafeiTVApp && typeof window.KafeiTVApp.restartCore === 'function') window.KafeiTVApp.restartCore(); else window.location.reload(); });
     focusById('core-retry');
+    if (automatic) requestCoreRecovery();
+  }
+  function requestCoreRecovery() {
+    if (!window.KafeiTVApp || typeof window.KafeiTVApp.recoverCore !== 'function') return false;
+    if (!coreRecoveryPending) {
+      coreRecoveryPending = true;
+      try { window.KafeiTVApp.recoverCore(); }
+      catch (ignore) { coreRecoveryPending = false; return false; }
+    }
+    return true;
   }
   function renderCategories() { return '<div class="filter-groups"><div class="category-row source-row" role="group" aria-label="直播来源">' + sources.map(function (source) { return '<button class="category-chip filter-chip source-chip focusable ' + (state.source === source.id ? 'is-selected' : '') + '" data-filter="source" data-source="' + source.id + '" data-focus="source-' + source.id + '">' + source.label + '</button>'; }).join('') + '</div><div class="category-row" role="group" aria-label="赛事分类">' + categories.map(function (c) { return '<button class="category-chip filter-chip category-chip focusable ' + (state.category === c.id ? 'is-selected' : '') + '" data-filter="category" data-category="' + c.id + '" data-focus="cat-' + c.id + '">' + c.label + '</button>'; }).join('') + '</div></div>'; }
   function bindFilters() {
@@ -432,6 +447,7 @@
     else if (summary.hasMore) scheduleLoadCheck();
   }
   function restoreFeedFocus(previousFocus) {
+    if (state.room) return;
     var navigationFocus = 'nav-' + state.page;
     var navigationFocusUnchanged = previousFocus === navigationFocus && (!state.focused || state.focused === previousFocus);
     if (navigationFocusUnchanged) {
@@ -663,11 +679,14 @@
     if (state.room.kind !== 'replay' && isRoomFinished(roomData)) { panel.hidden = true; showPlaybackEnded('直播已结束'); return; }
     if (!signals.length) { panel.hidden = true; setPlaybackError('当前没有可用线路', 'no signal'); focusById('player-retry'); return; }
     state.room.signals = signals;
-    list.innerHTML = signals.map(function (signal, index) { var label = signal.name || signal.title || signal.label || '线路 ' + (index + 1); return '<button class="signal-button focusable ' + (!index ? 'is-active' : '') + '" data-signal="' + index + '" data-focus="signal-' + index + '">' + escapeHTML(label) + '</button>'; }).join('');
+    var preferred = Math.floor(Number(state.room.preferredSignalIndex) || 0);
+    var selected = preferred >= 0 && preferred < signals.length ? preferred : 0;
+    delete state.room.preferredSignalIndex;
+    list.innerHTML = signals.map(function (signal, index) { var label = signal.name || signal.title || signal.label || '线路 ' + (index + 1); return '<button class="signal-button focusable ' + (index === selected ? 'is-active' : '') + '" data-signal="' + index + '" data-focus="signal-' + index + '">' + escapeHTML(label) + '</button>'; }).join('');
     list.querySelectorAll('.signal-button').forEach(function (button) { button.addEventListener('click', function () { selectSignal(Number(button.getAttribute('data-signal')), signals); }); });
     panel.hidden = signals.length < 2;
-    selectSignal(0, signals);
-    if (signals.length > 1) { focusById('signal-0'); showSignalPanel(); } else focusById('player-toggle');
+    selectSignal(selected, signals);
+    if (signals.length > 1) { focusById('signal-' + selected); showSignalPanel(); } else focusById('player-toggle');
   }
   function showSignalPanel() {
     var panel = document.getElementById('signal-panel'); if (!panel || panel.hidden) return;
@@ -817,7 +836,7 @@
     else { setPlaybackError('当前设备无法播放 HLS', 'HLS unsupported'); focusById('player-retry'); }
     if (!window.Hls && !hlsScriptRequested) { hlsScriptRequested = true; var script = document.createElement('script'); script.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js'; script.onload = function () { selectSignal(index, signals); }; script.onerror = function () { setPlaybackError('播放器加载失败', 'HLS script'); focusById('player-retry'); }; document.head.appendChild(script); }
   }
-  function closeRoom() { if (!state.room) return; cancelFrameReveal(); var previous = state.room.previous; var video = document.getElementById('room-video'); if (signalHideTimer) window.clearTimeout(signalHideTimer); if (controlsHideTimer) window.clearTimeout(controlsHideTimer); if (roomStatusTimer) window.clearInterval(roomStatusTimer); signalHideTimer = null; controlsHideTimer = null; roomStatusTimer = null; if (video) { video.pause(); video.removeAttribute('src'); video.load(); } if (state.hls && state.hls.destroy) state.hls.destroy(); state.hls = null; if (window.KafeiTVPlayer && window.KafeiTVPlayer.close) window.KafeiTVPlayer.close(); setNativePlaybackActive(false); var exit = document.exitFullscreen || document.webkitExitFullscreen; if (fullscreenActive() && exit) { var exitRequest = exit.call(document); if (exitRequest && exitRequest.catch) exitRequest.catch(function () {}); } state.room = null; layer.classList.remove('is-controls-hidden', 'is-ended', 'is-playback-error'); layer.hidden = true; layer.innerHTML = ''; focusById(previous); }
+  function closeRoom() { if (!state.room) return; cancelFrameReveal(); var previous = state.room.previous; var video = document.getElementById('room-video'); if (signalHideTimer) window.clearTimeout(signalHideTimer); if (controlsHideTimer) window.clearTimeout(controlsHideTimer); if (roomStatusTimer) window.clearInterval(roomStatusTimer); signalHideTimer = null; controlsHideTimer = null; roomStatusTimer = null; if (video) { video.pause(); video.removeAttribute('src'); video.load(); } if (state.hls && state.hls.destroy) state.hls.destroy(); state.hls = null; if (window.KafeiTVPlayer && window.KafeiTVPlayer.close) window.KafeiTVPlayer.close(); setNativePlaybackActive(false); var exit = document.exitFullscreen || document.webkitExitFullscreen; if (fullscreenActive() && exit) { var exitRequest = exit.call(document); if (exitRequest && exitRequest.catch) exitRequest.catch(function () {}); } state.room = null; layer.classList.remove('is-controls-hidden', 'is-ended', 'is-playback-error'); layer.hidden = true; layer.innerHTML = ''; if (!focusById(previous)) focusById(firstCardId()); }
   function enterPage(page) { if (!pages[page]) return; state.page = page; state.category = 'all'; state.focused = 'nav-' + page; loadPage(state.focused); }
   navButtons.forEach(function (button) { button.addEventListener('click', function () { enterPage(button.getAttribute('data-page')); }); });
   document.addEventListener('keydown', function (event) {
@@ -845,6 +864,30 @@
   window.KafeiNativePlaybackEvent = handleNativePlaybackEvent;
   window.MingmingTVBackground = function () { var video = document.getElementById('room-video'); if (video) video.pause(); if (window.KafeiTVPlayer && typeof window.KafeiTVPlayer.pause === 'function') window.KafeiTVPlayer.pause(); };
   window.KafeiTVResume = function () { readNativeUpdateStatus(); };
+  window.KafeiTVSaveState = function () {
+    var room = state.room;
+    return { page: state.page, source: state.source, category: state.category, focused: room ? room.previous : state.focused,
+      room: room ? { source: room.source, roomId: room.roomId, matchId: room.matchId, kind: room.kind, title: room.title, signalIndex: room.signalIndex,
+        paused: !room.playing && !room.lastError && !layer.classList.contains('is-loading') && !layer.classList.contains('is-buffering') } : null };
+  };
+  window.KafeiTVRestoreState = function (saved) {
+    if (!saved || typeof saved !== 'object') return;
+    coreRecoveryPending = false;
+    if (Object.prototype.hasOwnProperty.call(pages, saved.page)) state.page = saved.page;
+    if (sources.some(function (source) { return source.id === saved.source; })) state.source = saved.source;
+    if (categories.some(function (category) { return category.id === saved.category; })) state.category = saved.category;
+    state.focused = typeof saved.focused === 'string' && /^[a-zA-Z0-9_-]{1,160}$/.test(saved.focused) ? saved.focused : 'nav-' + state.page;
+    loadPage(state.focused);
+    var room = saved.room;
+    if (room && (room.source === 'doubao' || room.source === 'kafei') && /^(live|match|replay)$/.test(room.kind) && /^[a-zA-Z0-9_-]{1,160}$/.test(String(room.roomId))) {
+      var card = document.createElement('button');
+      card.setAttribute('data-source', room.source); card.setAttribute('data-room', room.roomId); card.setAttribute('data-match', String(room.matchId || ''));
+      card.setAttribute('data-kind', room.kind); card.setAttribute('data-title', String(room.title || '').slice(0, 256)); card.setAttribute('data-focus', state.focused);
+      openRoom(card);
+      state.room.preferredSignalIndex = Math.max(0, Math.min(100, Number(room.signalIndex) || 0));
+      state.room.restorePaused = !!room.paused;
+    }
+  };
   window.MingmingTVForeground = function () { };
   window.addEventListener('load', function () { api('/health', function (err, health) { setConnection(!err && health.ready); if (!err && health) { state.appVersion = String(health.version || ''); state.appVersionCode = Number(health.versionCode || 0); } }); loadPage('card-'); });
 }());
