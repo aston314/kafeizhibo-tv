@@ -39,7 +39,7 @@ final class StartupView extends LinearLayout {
         logoBlock.addView(ring, new FrameLayout.LayoutParams(dp(120), dp(120), Gravity.CENTER));
 
         ImageView logo = new ImageView(context);
-        logo.setImageResource(R.drawable.ic_launcher);
+        logo.setImageResource(R.drawable.startup_ball);
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
         logo.setFocusable(false);
         logo.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);

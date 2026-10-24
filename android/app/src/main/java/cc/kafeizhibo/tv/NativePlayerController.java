@@ -89,6 +89,10 @@ final class NativePlayerController {
                 playerView.setVisibility(View.GONE);
                 emit("error", error == null ? "native playback error" : error.getMessage());
             }
+
+            @Override public void onRenderedFirstFrame() {
+                if (player == nextPlayer) emit("first-frame", "");
+            }
         });
         emit("buffering", "");
         nextPlayer.setMediaSource(mediaSource);

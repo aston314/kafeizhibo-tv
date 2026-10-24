@@ -61,10 +61,17 @@
       layer.classList.add('is-buffering');
       setVideoPlaceholder('正在缓冲…', true);
       showPlayerControls();
+    } else if (event === 'first-frame') {
+      // Media3 may report playWhenReady before a decoded frame is visible.
+      // Keep the WebView loading layer until the first frame is rendered.
+      layer.classList.remove('is-loading', 'is-buffering', 'is-playback-error');
+      var firstFramePlaceholder = document.getElementById('video-placeholder');
+      if (firstFramePlaceholder) firstFramePlaceholder.hidden = true;
+      updatePlayerControl();
+      showPlayerControls();
     } else if (event === 'playing') {
       state.room.playing = true;
-      layer.classList.remove('is-loading', 'is-buffering', 'is-playback-error');
-      var placeholder = document.getElementById('video-placeholder'); if (placeholder) placeholder.hidden = true;
+      layer.classList.remove('is-playback-error');
       updatePlayerControl();
       showPlayerControls();
     } else if (event === 'paused') {
