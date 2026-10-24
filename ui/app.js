@@ -2,7 +2,7 @@
   'use strict';
   if (!NodeList.prototype.forEach) NodeList.prototype.forEach = Array.prototype.forEach;
   var categories = [{ id: 'all', label: '全部' }, { id: 'hot', label: '热门' }, { id: '1', label: '足球' }, { id: '2', label: '篮球' }, { id: '3', label: '网球' }, { id: '19', label: '台球' }];
-  var sources = [{ id: 'kafei', label: '咖啡直播' }, { id: 'doubao', label: '豆包直播' }];
+  var sources = [{ id: 'all', label: '全部来源' }, { id: 'doubao', label: '豆包直播' }, { id: 'kafei', label: '咖啡直播' }];
   var pages = { home: ['首页', '首页'], live: ['全部直播', '全部直播'], schedule: ['赛程', '赛程'], replay: ['录像回放', '录像回放'], support: ['打赏', '打赏'], settings: ['设置', '设置'] };
   var PAGE_SIZE = 12;
   var state = { page: 'home', category: 'all', source: 'doubao', request: 0, cards: [], room: null, focused: null, hls: null, feeds: {}, loadingMore: false, supportModal: false, supportPrevious: null, appVersion: '', appVersionCode: 0, update: null };
@@ -22,9 +22,10 @@
   var frameRevealToken = 0;
   var activeFeedRequest = null;
   var activeMoreRequest = null;
+  var activeAllPager = null;
   if (window.KafeiTVApp) document.documentElement.classList.add('android-app');
   var paginationObserver = window.IntersectionObserver ? new IntersectionObserver(function (entries) {
-    entries.forEach(function (entry) { if (entry.isIntersecting) loadMore(); });
+    entries.forEach(function (entry) { if (entry.isIntersecting && nearFeedEnd()) loadMore(); });
   }, { root: mainArea, rootMargin: '0px 0px 280px 0px', threshold: 0 }) : null;
 
   function escapeHTML(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]; }); }
@@ -172,8 +173,8 @@
     root.querySelectorAll('.team-logo').forEach(function (image) { image.addEventListener('error', function () { image.style.display = 'none'; }); });
   }
   function normalizeMatchTitle(value) { return String(value == null ? '' : value).replace(/\s+vs\s+/gi, ' VS '); }
-  function cardsFor(page, category, pageNumber, done, cursor) {
-    return get('/api/v2/feed', { view: page, source: state.source, category: category, page: pageNumber, size: PAGE_SIZE, cursor: cursor || '' }, function (err, result) {
+  function cardsFor(page, category, pageNumber, done, cursor, source) {
+    return get('/api/v2/feed', { view: page, source: source || state.source, category: category, page: pageNumber, size: PAGE_SIZE, cursor: cursor || '' }, function (err, result) {
       if (err) return done(err);
       var data = result && result.data || {};
       done(null, { items: Array.isArray(data.items) ? data.items : [], total: data.total == null ? null : Number(data.total), hasMore: !!data.hasMore, nextCursor: data.nextCursor || '', sources: result.sources || {} });
@@ -187,12 +188,26 @@
     focusById('core-retry');
   }
   function renderCategories() { return '<div class="filter-groups"><div class="category-row source-row" role="group" aria-label="直播来源">' + sources.map(function (source) { return '<button class="category-chip filter-chip source-chip focusable ' + (state.source === source.id ? 'is-selected' : '') + '" data-filter="source" data-source="' + source.id + '" data-focus="source-' + source.id + '">' + source.label + '</button>'; }).join('') + '</div><div class="category-row" role="group" aria-label="赛事分类">' + categories.map(function (c) { return '<button class="category-chip filter-chip category-chip focusable ' + (state.category === c.id ? 'is-selected' : '') + '" data-filter="category" data-category="' + c.id + '" data-focus="cat-' + c.id + '">' + c.label + '</button>'; }).join('') + '</div></div>'; }
+  function bindFilters() {
+    categorySlot.querySelectorAll('.filter-chip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        if (chip.getAttribute('data-filter') === 'source') state.source = chip.getAttribute('data-source');
+        else state.category = chip.getAttribute('data-category');
+        state.focused = chip.getAttribute('data-focus'); loadPage(state.focused);
+      });
+    });
+  }
   function setSourceHealth(states) {
     var failed = []; var stale = [];
     Object.keys(states || {}).forEach(function (name) { var stateInfo = states[name] || {}; if (stateInfo.status === 'error') failed.push(name === 'doubao' ? '豆包直播' : '咖啡直播'); if (stateInfo.status === 'stale') stale.push(name === 'doubao' ? '豆包直播' : '咖啡直播'); });
     var holder = categorySlot.querySelector('[data-source-health]');
     if (!holder) { holder = document.createElement('div'); holder.setAttribute('data-source-health', '1'); holder.className = 'source-health'; categorySlot.appendChild(holder); }
-    if (failed.length) holder.textContent = failed.join('、') + '暂时不可用';
+    holder.classList.toggle('is-multi', state.source === 'all');
+    if (state.source === 'all') holder.textContent = ['doubao', 'kafei'].map(function (name) {
+      var info = states[name] || {}; var label = name === 'doubao' ? '豆包直播' : '咖啡直播';
+      return label + (info.status === 'loading' ? (info.page > 0 ? '加载更多…' : '加载中…') : info.status === 'error' ? '暂不可用' : info.status === 'stale' ? '显示最近数据' : '已加载');
+    }).join(' · ');
+    else if (failed.length) holder.textContent = failed.join('、') + '暂时不可用';
     else if (stale.length) holder.textContent = stale.join('、') + '显示最近数据';
     else holder.textContent = '';
     holder.classList.toggle('is-visible', !!holder.textContent);
@@ -306,7 +321,7 @@
     var status = item.status || '';
     var badge = kind === 'replay' ? '录像' : status === 'finished' ? '已结束' : (status === 'live' || status === 'online' || status === '直播中') ? '直播中' : '即将开始';
     var image = imageURL(item.cover || item.screenshot || item.cover_image || item.match_info && item.match_info.screenshot, source);
-    var cardId = 'card-' + String(room || id || Math.random()).replace(/[^a-zA-Z0-9_-]/g, '');
+    var cardId = 'card-' + source + '-' + String(room || id || Math.random()).replace(/[^a-zA-Z0-9_-]/g, '');
     var time = formatLocalMatchTime(item.start_time || item.match_time || item.time || '');
     var heat = item.heat ? '热度 ' + item.heat : '';
     var sport = item.sport || ({ '1': '足球', '2': '篮球', '3': '网球', '19': '台球' }[String(item.category || item.type)] || '足球');
@@ -320,12 +335,14 @@
   function section(title, items, kind) { if (!items || !items.length) return title ? '<section class="feed-section" data-section-kind="' + kind + '"><div class="section-head"><h2 class="section-title">' + title + '</h2><span class="section-note">暂无内容</span></div><div class="card-grid" data-grid-kind="' + kind + '"></div></section>' : '<div class="state-panel"><div>暂无内容</div></div>'; var head = title ? '<div class="section-head"><h2 class="section-title">' + title + '</h2><span class="section-note">' + items.length + ' 场</span></div>' : ''; return '<section class="feed-section" data-section-kind="' + kind + '">' + head + '<div class="card-grid" data-grid-kind="' + kind + '">' + items.map(function (item) { return matchCard(item, kind); }).join('') + '</div></section>'; }
   function loadPage(restore) {
     var request = ++state.request; var previousFocus = restore || state.focused; var feedKey = state.page + ':' + state.category + ':' + state.source;
+    if (activeAllPager) { activeAllPager.abort(); activeAllPager = null; }
     if (activeFeedRequest) { activeFeedRequest.abort(); activeFeedRequest = null; }
     if (activeMoreRequest) { activeMoreRequest.abort(); activeMoreRequest = null; }
     if (paginationObserver) paginationObserver.disconnect();
     state.feeds[feedKey] = { page: 1, hasMore: false, total: null, loading: false, local: null, cursor: '' };
     pageTitle.textContent = pages[state.page][1];
     categorySlot.innerHTML = renderCategories();
+    bindFilters();
     navButtons.forEach(function (button) { button.classList.toggle('is-active', button.getAttribute('data-page') === state.page); });
     if (state.page === 'support') {
       renderSupportPage(previousFocus);
@@ -335,6 +352,7 @@
       renderSettingsPage(previousFocus);
       return;
     }
+    if (state.source === 'all') { loadAllSources(feedKey, request, previousFocus); return; }
     renderState('正在加载', '正在获取赛事信息…', false);
     activeFeedRequest = cardsFor(state.page, state.category, 1, function (err, data) {
       if (request !== state.request) return;
@@ -360,22 +378,72 @@
       }
       watchTeamLogos(content);
       content.querySelectorAll('.match-card').forEach(function (card) { card.addEventListener('click', function () { openRoom(card); }); });
-      categorySlot.querySelectorAll('.filter-chip').forEach(function (chip) { chip.addEventListener('click', function () { if (chip.getAttribute('data-filter') === 'source') state.source = chip.getAttribute('data-source'); else state.category = chip.getAttribute('data-category'); state.focused = chip.getAttribute('data-focus'); loadPage(state.focused); }); });
       var retry = content.querySelector('[data-action="retry"]'); if (retry) retry.addEventListener('click', function () { loadPage(); });
-      var navigationFocus = 'nav-' + state.page;
-      var navigationFocusUnchanged = previousFocus === navigationFocus && (!state.focused || state.focused === previousFocus);
-      if (navigationFocusUnchanged) {
-        var firstCard = content.querySelector('.match-card');
-        if (firstCard) { focusTarget(firstCard); state.focused = firstCard.getAttribute('data-focus'); }
-        else focusById('source-' + state.source);
-      } else {
-        var restoreTarget = state.focused && state.focused !== previousFocus ? state.focused : previousFocus;
-        var restored = restoreTarget && focusById(restoreTarget);
-        if (!restored && (state.page === 'live' || state.page === 'schedule' || state.page === 'replay')) focusById('cat-' + state.category);
-        else if (!restored) focusById(firstCardId());
-      }
+      restoreFeedFocus(previousFocus);
       updatePagination(feedKey);
     });
+  }
+  function loadAllSources(feedKey, request, previousFocus) {
+    var feed = state.feeds[feedKey]; feed.multi = true;
+    var page = state.page; var category = state.category;
+    var kind = page === 'schedule' ? 'match' : page === 'replay' ? 'replay' : 'live';
+    var heading = page === 'home' ? '<div class="section-head"><h2 class="section-title">正在直播</h2><span class="section-note" data-multi-count></span></div>' : '';
+    content.innerHTML = '<div class="state-panel multi-state" data-multi-state><div class="state-spinner" role="progressbar" aria-label="正在加载"></div><div class="state-title">正在加载</div><div>正在获取赛事信息…</div></div><section class="feed-section multi-feed" hidden>' + heading + '<div class="card-grid" data-grid-kind="' + kind + '"></div></section><div id="pagination-loader" class="pagination-loader multi-pagination"></div>';
+    feed.pager = window.TVFeedPager.create({
+      sources: ['doubao', 'kafei'],
+      request: function (source, pageNumber, cursor, done) { return cardsFor(page, category, pageNumber, done, cursor, source); },
+      onChange: function (event) {
+        if (request !== state.request || state.feeds[feedKey] !== feed) return;
+        var summary = event.snapshot; feed.hasMore = summary.hasMore; feed.loading = summary.loading;
+        setSourceHealth(summary.states);
+        setConnection(Object.keys(summary.states).some(function (name) { var status = summary.states[name].status; return status === 'ok' || status === 'stale'; }));
+        var grid = content.querySelector('.card-grid');
+        if (event.items.length) appendItems(event.items, kind, grid);
+        var count = grid.querySelectorAll('.match-card').length;
+        if (!count && !summary.loading && window.KafeiTVApp && Object.keys(summary.states).every(function (name) { return /HTTP 0|网络连接失败/.test(summary.states[name].message); })) {
+          feed.pager.abort(); renderCoreError('本地服务连接已断开，请重新连接。'); return;
+        }
+        content.querySelector('.multi-feed').hidden = !count;
+        var panel = content.querySelector('[data-multi-state]'); panel.hidden = !!count;
+        if (!count && summary.loading) panel.innerHTML = '<div class="state-spinner" role="progressbar" aria-label="正在加载"></div><div class="state-title">正在加载</div><div>正在获取赛事信息…</div>';
+        if (!count && !summary.loading) panel.innerHTML = '<div class="state-title">' + (summary.failed ? '内容加载失败' : '暂无内容') + '</div><div>' + (summary.failed ? '可在下方重试暂时不可用的来源' : '当前分类暂无赛事') + '</div>';
+        var countLabel = content.querySelector('[data-multi-count]'); if (countLabel) countLabel.textContent = count + ' 场';
+        updateAllPagination(feed, summary);
+        if (count && !feed.focusApplied) { feed.focusApplied = true; if (!state.room) restoreFeedFocus(previousFocus); }
+      }
+    });
+    activeAllPager = feed.pager; feed.pager.start();
+  }
+  function updateAllPagination(feed, summary) {
+    var footer = document.getElementById('pagination-loader'); if (!footer) return;
+    var focused = footer.contains(document.activeElement) && document.activeElement.getAttribute('data-focus');
+    footer.innerHTML = ['doubao', 'kafei'].map(function (source) {
+      var info = summary.states[source]; var label = source === 'doubao' ? '豆包直播' : '咖啡直播';
+      if (info.status === 'error' || info.retrying) return '<button class="source-retry focusable" data-multi-retry="' + source + '" data-focus="source-retry-' + source + '" aria-disabled="' + (!!info.retrying) + '">' + (info.retrying ? '正在重试' : '重试') + label + '</button>';
+      if (info.loading) return '<span class="source-loading"><span class="state-spinner" aria-hidden="true"></span><span>' + label + (info.page > 0 ? '加载更多…' : '加载中…') + '</span></span>';
+      return '';
+    }).join('') + (summary.hasMore && !summary.loading ? '<span class="pagination-note">下滑加载更多</span>' : '');
+    footer.hidden = !summary.hasMore && !summary.loading && !summary.failed;
+    footer.querySelectorAll('[data-multi-retry]').forEach(function (button) { button.addEventListener('click', function () { feed.pager.retry(button.getAttribute('data-multi-retry')); }); });
+    if (focused && !focusById(focused)) {
+      var cards = content.querySelectorAll('.match-card'); if (cards.length) focusTarget(cards[cards.length - 1]);
+    }
+    if (paginationObserver) { paginationObserver.unobserve(footer); if (summary.hasMore) paginationObserver.observe(footer); }
+    else if (summary.hasMore) scheduleLoadCheck();
+  }
+  function restoreFeedFocus(previousFocus) {
+    var navigationFocus = 'nav-' + state.page;
+    var navigationFocusUnchanged = previousFocus === navigationFocus && (!state.focused || state.focused === previousFocus);
+    if (navigationFocusUnchanged) {
+      var firstCard = content.querySelector('.match-card');
+      if (firstCard) { focusTarget(firstCard); state.focused = firstCard.getAttribute('data-focus'); }
+      else focusById('source-' + state.source);
+    } else {
+      var restoreTarget = state.focused && state.focused !== previousFocus ? state.focused : previousFocus;
+      var restored = restoreTarget && focusById(restoreTarget);
+      if (!restored && (state.page === 'live' || state.page === 'schedule' || state.page === 'replay')) focusById('cat-' + state.category);
+      else if (!restored) focusById(firstCardId());
+    }
   }
   function updatePagination(feedKey) {
     var feed = state.feeds[feedKey]; if (!feed) return;
@@ -392,6 +460,7 @@
     var requestFrame = window.requestAnimationFrame || function (callback) { return window.setTimeout(callback, 16); };
     requestFrame(function () { if (mainArea.scrollTop + mainArea.clientHeight >= mainArea.scrollHeight - 280) loadMore(); });
   }
+  function nearFeedEnd() { return mainArea.scrollTop + mainArea.clientHeight >= mainArea.scrollHeight - 280; }
   function appendItems(items, kind, targetGrid) {
     if (!items || !items.length || !targetGrid) return;
     var holder = document.createElement('div'); holder.innerHTML = items.map(function (item) { return matchCard(item, kind); }).join('');
@@ -399,6 +468,7 @@
   }
   function loadMore() {
     var feedKey = state.page + ':' + state.category + ':' + state.source; var feed = state.feeds[feedKey];
+    if (feed && feed.multi) { if (!state.room && activeAllPager && nearFeedEnd()) activeAllPager.loadMore(); return; }
     if (!feed || !feed.hasMore || feed.loading || feed.failed || state.room) return;
     feed.loading = true; updatePagination(feedKey);
     if (feed.local) {
@@ -434,7 +504,7 @@
     }, feed.cursor);
   }
   function setConnection(online) { document.documentElement.setAttribute('data-connection', online ? 'connected' : 'error'); }
-  function firstCardId() { var card = content.querySelector('.match-card'); return card ? card.getAttribute('data-focus') : 'nav-' + state.page; }
+  function firstCardId() { var card = content.querySelector('.match-card') || content.querySelector('[data-multi-retry]'); return card ? card.getAttribute('data-focus') : 'nav-' + state.page; }
   function focusTarget(target) {
     if (!target || !target.focus) return false;
     var scrollParents = []; var node = target.parentElement;
@@ -533,6 +603,14 @@
       else if (direction === 'ArrowUp') focusById('nav-' + state.page);
       return;
     }
+    if (current.classList.contains('source-retry') || current.classList.contains('pagination-retry')) {
+      var footer = document.getElementById('pagination-loader'); var actions = footer ? visibleFocusables(footer) : []; var actionIndex = actions.indexOf(current);
+      if (direction === 'ArrowLeft' && actionIndex > 0) focusTarget(actions[actionIndex - 1]);
+      else if (direction === 'ArrowLeft') focusById('nav-' + state.page);
+      else if (direction === 'ArrowRight' && actionIndex < actions.length - 1) focusTarget(actions[actionIndex + 1]);
+      else if (direction === 'ArrowUp') { var aboveCard = spatialTarget(current, Array.prototype.slice.call(content.querySelectorAll('.match-card')), 'ArrowUp'); if (aboveCard) focusTarget(aboveCard); else focusById('cat-' + state.category); }
+      return;
+    }
     if (current.classList.contains('match-card')) {
       var cards = Array.prototype.slice.call(content.querySelectorAll('.match-card')); var nextCard = spatialTarget(current, cards, direction);
       if (nextCard) { focusTarget(nextCard); return; }
@@ -542,6 +620,9 @@
       } else if (direction === 'ArrowUp') {
         var above = spatialTarget(current, cards, 'ArrowUp');
         if (!above) focusById('cat-' + state.category);
+      } else if (direction === 'ArrowDown') {
+        var pagination = document.getElementById('pagination-loader'); var retryTargets = pagination ? visibleFocusables(pagination) : [];
+        if (retryTargets.length) focusTarget(retryTargets[0]);
       }
       return;
     }

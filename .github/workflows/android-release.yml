@@ -92,6 +92,8 @@ jobs:
         run: |
           go test -race ./...
           node --check ui/app.js
+          node --check ui/feed-pager.js
+          node --test tests/feed-pager.test.cjs
           git diff --check
 
       - name: Run Android unit tests and lint
