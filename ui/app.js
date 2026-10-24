@@ -17,6 +17,7 @@
   var signalHideTimer = null;
   var controlsHideTimer = null;
   var roomStatusTimer = null;
+  var nativeUpdateTimer = null;
   var frameRevealTimer = null;
   var frameRevealToken = 0;
   if (window.KafeiTVApp) document.documentElement.classList.add('android-app');
@@ -159,7 +160,7 @@
     if (!focusById(previousFocus || 'support-wechat')) focusById('support-wechat');
   }
   function settingsMarkup() {
-    return '<section class="settings-page" aria-labelledby="settings-title"><div class="settings-card"><h2 id="settings-title">应用设置</h2><div class="settings-row"><span>当前版本</span><strong id="settings-version">' + escapeHTML(state.appVersion || '读取中…') + '</strong></div><button class="settings-action focusable" data-action="check-update" data-focus="settings-check">检查版本更新</button><div id="settings-status" class="settings-status" aria-live="polite">可手动检查新版本</div><button id="settings-download" class="settings-download focusable" data-action="download-update" data-focus="settings-download">打开下载页面</button></div></section>';
+    return '<section class="settings-page" aria-labelledby="settings-title"><div class="settings-card"><h2 id="settings-title">应用设置</h2><div class="settings-row"><span>当前版本</span><strong id="settings-version">' + escapeHTML(state.appVersion || '读取中…') + '</strong></div><button class="settings-action focusable" data-action="check-update" data-focus="settings-check">检查版本更新</button><div id="settings-status" class="settings-status" aria-live="polite">可手动检查新版本</div><button id="settings-download" class="settings-download focusable" data-action="download-update" data-focus="settings-download">安装新版本</button></div></section>';
   }
   function setSettingsStatus(message, kind) {
     var status = document.getElementById('settings-status'); if (!status) return;
@@ -175,6 +176,7 @@
     if (check) check.addEventListener('click', checkForUpdate);
     if (download) download.addEventListener('click', openUpdateDownload);
     if (!focusById(previousFocus && previousFocus.indexOf('settings-') === 0 ? previousFocus : 'settings-check')) focusById('settings-check');
+    readNativeUpdateStatus();
     api('/health', function (err, health) {
       if (err || !health) return;
       state.appVersion = String(health.version || state.appVersion || '');
@@ -182,12 +184,30 @@
       var version = document.getElementById('settings-version'); if (version) version.textContent = state.appVersion || '未知';
     });
   }
+  function readNativeUpdateStatus() {
+    if (!window.KafeiUpdate || typeof window.KafeiUpdate.getStatus !== 'function') return;
+    try {
+      var raw = window.KafeiUpdate.getStatus(); var status = raw ? JSON.parse(raw) : null;
+      if (!status) return;
+      var check = document.querySelector('[data-action="check-update"]');
+      if (check && status.state !== 'checking') { check.disabled = false; check.textContent = '重新检查'; }
+      if (status.message) setSettingsStatus(status.message, status.state === 'error' ? 'error' : status.state === 'available' ? 'update' : '');
+      var download = document.getElementById('settings-download');
+      if (download) {
+        download.classList.toggle('is-visible', status.state === 'available' || status.state === 'ready' || status.state === 'downloading');
+        download.textContent = status.state === 'downloading' ? '取消下载' : status.state === 'ready' ? '安装更新' : '下载并安装';
+      }
+      if (nativeUpdateTimer) { window.clearTimeout(nativeUpdateTimer); nativeUpdateTimer = null; }
+      if (status.state === 'checking' || status.state === 'downloading') nativeUpdateTimer = window.setTimeout(readNativeUpdateStatus, 800);
+    } catch (ignore) {}
+  }
   function checkForUpdate() {
     var button = document.querySelector('[data-action="check-update"]');
     var download = document.querySelector('[data-action="download-update"]');
     if (button) { button.disabled = true; button.textContent = '正在检查…'; }
     if (download) { download.classList.remove('is-visible'); state.update = null; }
     setSettingsStatus('正在检查版本信息…', '');
+    if (window.KafeiUpdate && typeof window.KafeiUpdate.check === 'function') { window.KafeiUpdate.check(); window.setTimeout(readNativeUpdateStatus, 250); return; }
     api('/api/v2/update', function (err, response) {
       if (button) { button.disabled = false; button.textContent = '重新检查'; }
       if (err || !response || !response.data) { setSettingsStatus('检查失败，请稍后重试。', 'error'); return; }
@@ -202,6 +222,16 @@
     });
   }
   function openUpdateDownload() {
+    if (window.KafeiUpdate && typeof window.KafeiUpdate.getStatus === 'function') {
+      try {
+        var status = JSON.parse(window.KafeiUpdate.getStatus() || '{}');
+        if (status.state === 'downloading' && typeof window.KafeiUpdate.cancel === 'function') window.KafeiUpdate.cancel();
+        else if (status.state === 'ready' && typeof window.KafeiUpdate.install === 'function') window.KafeiUpdate.install();
+        else if (typeof window.KafeiUpdate.download === 'function') window.KafeiUpdate.download();
+      } catch (ignore) {}
+      window.setTimeout(readNativeUpdateStatus, 500);
+      return;
+    }
     var manifest = state.update; var url = manifest && manifest.download_url;
     if (!url) return;
     if (window.KafeiTVApp && typeof window.KafeiTVApp.openUrl === 'function') window.KafeiTVApp.openUrl(url);
@@ -680,6 +710,7 @@
   window.MingmingTVKey = function (code) { var keys = { 19: 'ArrowUp', 20: 'ArrowDown', 21: 'ArrowLeft', 22: 'ArrowRight', 23: 'Enter', 66: 'Enter', 4: 'Escape' }; var key = keys[code]; if (!key) return; var event = document.createEvent('Event'); event.initEvent('keydown', true, true); Object.defineProperty(event, 'key', { value: key }); document.dispatchEvent(event); };
   window.MingmingTVBack = function () { if (state.room) { closeRoom(); return true; } if (state.supportModal) { closeSupportModal(); return true; } return false; };
   window.MingmingTVBackground = function () { var video = document.getElementById('room-video'); if (video) video.pause(); };
+  window.KafeiTVResume = function () { readNativeUpdateStatus(); };
   window.MingmingTVForeground = function () { };
   window.addEventListener('load', function () { api('/health', function (err, health) { setConnection(!err && health.ready); if (!err && health) { state.appVersion = String(health.version || ''); state.appVersionCode = Number(health.versionCode || 0); } }); loadPage('card-'); });
 }());

@@ -108,42 +108,82 @@ func (s *Server) checkForUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parsed, err := url.Parse(manifestURL)
-	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
 		http.Error(w, "invalid update manifest URL", http.StatusBadGateway)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
-	if err != nil {
-		http.Error(w, "invalid update manifest request", http.StatusBadGateway)
-		return
-	}
-	req.Header.Set("Accept", "application/json")
-	resp, err := s.client.Do(req)
-	if err != nil {
-		if body, staleOK := s.stale(cacheKey); staleOK {
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "code": 0, "stale": true, "data": json.RawMessage(body)})
+	parsed.RawQuery = "check=" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	origin := parsed.String()
+	var body []byte
+	var lastErr error
+	for _, source := range updateSources(origin, s.updateProxies) {
+		ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+		req, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+		if requestErr != nil {
+			cancel()
+			lastErr = requestErr
+			continue
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Cache-Control", "no-cache")
+		resp, requestErr := s.client.Do(req)
+		if requestErr == nil {
+			var readErr error
+			if resp.StatusCode < 200 || resp.StatusCode > 299 {
+				requestErr = fmt.Errorf("update service returned HTTP %d", resp.StatusCode)
+			} else {
+				body, readErr = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+				if readErr != nil {
+					requestErr = readErr
+				} else if !json.Valid(body) {
+					requestErr = errors.New("invalid update manifest")
+				} else {
+					var manifest struct {
+						PackageName string `json:"package_name"`
+					}
+					if json.Unmarshal(body, &manifest) != nil || manifest.PackageName != s.cfg.ApplicationID {
+						requestErr = errors.New("update package mismatch")
+					}
+				}
+			}
+			_ = resp.Body.Close()
+		}
+		cancel()
+		if requestErr == nil {
+			s.store(cacheKey, body, 5*time.Minute)
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "code": 0, "data": json.RawMessage(body)})
 			return
 		}
-		http.Error(w, "update manifest unavailable", http.StatusBadGateway)
+		lastErr = requestErr
+	}
+	if body, staleOK := s.stale(cacheKey); staleOK {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "code": 0, "stale": true, "data": json.RawMessage(body)})
 		return
 	}
-	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if readErr != nil || resp.StatusCode < 200 || resp.StatusCode > 299 || !json.Valid(body) {
-		http.Error(w, "invalid update manifest", http.StatusBadGateway)
-		return
+	if lastErr == nil {
+		lastErr = errors.New("no update source available")
 	}
-	var manifest struct {
-		PackageName string `json:"package_name"`
+	http.Error(w, "update manifest unavailable: "+lastErr.Error(), http.StatusBadGateway)
+}
+
+func updateSources(origin string, proxies []string) []string {
+	sources := make([]string, 0, len(proxies)+1)
+	seen := make(map[string]bool, len(proxies)+1)
+	for _, proxy := range proxies {
+		prefix := strings.TrimSpace(proxy)
+		if prefix == "" {
+			continue
+		}
+		source := strings.TrimRight(prefix, "/") + "/" + origin
+		if !seen[source] {
+			sources = append(sources, source)
+			seen[source] = true
+		}
 	}
-	if json.Unmarshal(body, &manifest) != nil || manifest.PackageName != s.cfg.ApplicationID {
-		http.Error(w, "update package mismatch", http.StatusBadGateway)
-		return
+	if !seen[origin] {
+		sources = append(sources, origin)
 	}
-	s.store(cacheKey, body, 5*time.Minute)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "code": 0, "data": json.RawMessage(body)})
+	return sources
 }
 
 func (s *Server) aggregateFeed(w http.ResponseWriter, r *http.Request) {

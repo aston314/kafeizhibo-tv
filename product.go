@@ -14,7 +14,7 @@ type Config struct {
 }
 
 func Load() Config {
-	return Config{ProductID: "sports-live-tv", DisplayName: "球赛直播", ApplicationID: "cc.kafeizhibo.tv", VersionName: "0.1.8", VersionCode: 9, Upstream: envOr("KAFEI_UPSTREAM", "https://kafeizhibo.cc"), DoubaoUpstream: envOr("DOUBAO_UPSTREAM", "https://www.doubaozhibo.com"), UpdateManifest: envOr("UPDATE_MANIFEST_URL", "https://github.com/aston314/kafeizhibo-tv/releases/latest/download/update.json")}
+	return Config{ProductID: "sports-live-tv", DisplayName: "球赛直播", ApplicationID: "cc.kafeizhibo.tv", VersionName: "0.1.9", VersionCode: 10, Upstream: envOr("KAFEI_UPSTREAM", "https://kafeizhibo.cc"), DoubaoUpstream: envOr("DOUBAO_UPSTREAM", "https://www.doubaozhibo.com"), UpdateManifest: envOr("UPDATE_MANIFEST_URL", "https://github.com/aston314/kafeizhibo-tv/releases/latest/download/update.json")}
 }
 
 func envOr(key, fallback string) string {

@@ -83,11 +83,20 @@ jobs:
       - name: Install Android SDK and NDK
         run: sdkmanager "platform-tools" "platforms;${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}"
 
+      - name: Set up Gradle
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
       - name: Verify source
         run: |
           go test -race ./...
           node --check ui/app.js
           git diff --check
+
+      - name: Run Android unit tests and lint
+        working-directory: android
+        run: gradle --no-daemon test lint
 
       - name: Build Go cores for Android ABIs
         run: |
@@ -124,11 +133,6 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
           chmod 600 "$ANDROID_KEYSTORE_PATH"
           test -s "$ANDROID_KEYSTORE_PATH"
-
-      - name: Set up Gradle
-        uses: gradle/gradle-build-action@v3
-        with:
-          gradle-version: ${{ env.GRADLE_VERSION }}
 
       - name: Assemble signed release APK
         working-directory: android

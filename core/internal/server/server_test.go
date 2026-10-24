@@ -2,8 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -80,7 +84,7 @@ func TestFixtureRoutesAndHealth(t *testing.T) {
 	s := New(product.Load(), "test", "fixture-test", true)
 	for _, tc := range []struct{ path, want string }{
 		{"/health", `"ready":true`},
-		{"/api/v2/update", `"version_code":9`},
+		{"/api/v2/update", `"version_code":10`},
 		{"/api/v1/archor?type=2", `"category":2`},
 		{"/api/v1/room/1022", `"signals"`},
 	} {
@@ -93,6 +97,52 @@ func TestFixtureRoutesAndHealth(t *testing.T) {
 		if body := res.Body.String(); !contains(body, tc.want) {
 			t.Fatalf("%s: response missing %s: %s", tc.path, tc.want, body)
 		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+func TestUpdateManifestFallsBackAcrossProxiesThenDirect(t *testing.T) {
+	cfg := product.Load()
+	cfg.UpdateManifest = "https://github.com/aston314/kafeizhibo-tv/releases/latest/download/update.json"
+	s := New(cfg, "test", "update-proxy-test", false)
+	s.updateProxies = []string{"https://proxy-one.test/", "https://proxy-two.test/"}
+	var calls []string
+	s.client = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls = append(calls, request.URL.Host)
+		status, body := http.StatusBadGateway, "proxy unavailable"
+		if request.URL.Host == "github.com" {
+			status, body = http.StatusOK, fmt.Sprintf(`{"package_name":%q,"version_code":10}`, cfg.ApplicationID)
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+	})}
+
+	res := httptest.NewRecorder()
+	s.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/v2/update", nil))
+	if res.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+	}
+	if strings.Join(calls, ",") != "proxy-one.test,proxy-two.test,github.com" {
+		t.Fatalf("sources were not tried in order: %v", calls)
+	}
+}
+
+func TestUpdateSourcesKeepsDirectLastAndRemovesDuplicates(t *testing.T) {
+	origin := "https://github.com/owner/repo/releases/latest/download/update.json"
+	sources := updateSources(origin, []string{"https://proxy.test/", "https://proxy.test", ""})
+	want := []string{"https://proxy.test/" + origin, origin}
+	if len(sources) != len(want) {
+		t.Fatalf("sources=%v", sources)
+	}
+	for index := range want {
+		if sources[index] != want[index] {
+			t.Fatalf("source %d=%q want %q", index, sources[index], want[index])
+		}
+	}
+	if _, err := url.Parse(sources[0]); err != nil {
+		t.Fatalf("invalid proxy URL: %v", err)
 	}
 }
 
