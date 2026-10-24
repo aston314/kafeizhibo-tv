@@ -37,7 +37,7 @@ type cachedResponse struct {
 }
 
 func New(cfg product.Config, version, instance string, fixture bool) *Server {
-	return &Server{cfg: cfg, version: version, instance: instance, fixture: fixture, updateProxies: []string{"https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.com/"}, client: &http.Client{Timeout: 12 * time.Second}, doubaoClient: &http.Client{Timeout: 12 * time.Second}, feedTimeout: 4 * time.Second, roomTimeout: 4 * time.Second, playbackTimeout: 6 * time.Second, metadata: make(map[string]cachedResponse)}
+	return &Server{cfg: cfg, version: version, instance: instance, fixture: fixture, updateProxies: []string{"https://ghfast.top/", "https://ghproxy.net/", "https://gh-proxy.com/"}, client: &http.Client{Timeout: 12 * time.Second}, doubaoClient: &http.Client{Timeout: 12 * time.Second}, feedTimeout: 10 * time.Second, roomTimeout: 10 * time.Second, playbackTimeout: 10 * time.Second, metadata: make(map[string]cachedResponse)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
