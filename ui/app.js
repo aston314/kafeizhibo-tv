@@ -570,7 +570,12 @@
       if (!state.room || !state.room.playing) return;
       var surface = document.getElementById('room-video');
       if (layer.contains(document.activeElement) && document.activeElement !== surface && document.activeElement.classList.contains('focusable')) return;
-      if (surface && layer.contains(document.activeElement)) focusTarget(surface);
+      if (surface && layer.contains(document.activeElement)) {
+        // Native Media3 renders below the WebView, so keep a focus anchor in the
+        // WebView instead of focusing the hidden HTML5 video surface.
+        if (state.room.native) focusById('player-toggle');
+        else focusTarget(surface);
+      }
       var panel = document.getElementById('signal-panel');
       if (panel && !panel.hidden) panel.classList.add('is-auto-hidden');
       layer.classList.add('is-controls-hidden');
