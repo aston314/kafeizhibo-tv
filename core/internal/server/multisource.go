@@ -428,6 +428,9 @@ func (s *Server) fetchFeed(r *http.Request, source, view, category string, page,
 }
 
 func (s *Server) fetchSource(ctx context.Context, source, requestPath string, query url.Values, cacheable bool) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	base, client, err := s.sourceClient(source)
 	if err != nil {
 		return nil, false, err
@@ -444,6 +447,13 @@ func (s *Server) fetchSource(ctx context.Context, source, requestPath string, qu
 		if body, ok := s.stale(key); ok {
 			s.refreshMetadata(key, source, requestPath, query)
 			return body, true, nil
+		}
+		flight := s.startMetadata(key, source, requestPath, query)
+		select {
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		case <-flight.done:
+			return flight.body, false, flight.err
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullPath, nil)
@@ -472,9 +482,6 @@ func (s *Server) fetchSource(ctx context.Context, source, requestPath string, qu
 					return nil, false, errors.New("upstream API rejected request")
 				}
 			}
-			if cacheable {
-				s.store(key, body, 30*time.Second)
-			}
 			return body, false, nil
 		}
 		if readErr != nil {
@@ -483,40 +490,72 @@ func (s *Server) fetchSource(ctx context.Context, source, requestPath string, qu
 			lastErr = fmt.Errorf("upstream status %d", resp.StatusCode)
 		}
 	}
-	if cacheable {
-		if body, ok := s.stale(key); ok {
-			return body, true, nil
-		}
-	}
 	return nil, false, lastErr
 }
 
-// Navigation can use recently fetched real metadata immediately. At most one
-// bounded refresh per cache key runs in the background; playback is excluded.
-func (s *Server) refreshMetadata(key, source, requestPath string, query url.Values) {
+type metadataFlight struct {
+	done chan struct{}
+	body []byte
+	err  error
+}
+
+// A navigation owns its wait, not the metadata fetch. Switching away cancels
+// that wait immediately; switching back joins the same bounded fetch rather
+// than repeatedly discarding a nearly complete TLS connection and response.
+// Keys include source, path and query. Playback never enters this path.
+func (s *Server) startMetadata(key, source, requestPath string, query url.Values) *metadataFlight {
 	s.mu.Lock()
-	if s.refreshing == nil {
-		s.refreshing = make(map[string]bool)
+	defer s.mu.Unlock()
+	if s.metadataFlights == nil {
+		s.metadataFlights = make(map[string]*metadataFlight)
 	}
-	if s.refreshing[key] {
-		s.mu.Unlock()
-		return
+	if flight := s.metadataFlights[key]; flight != nil {
+		return flight
 	}
-	s.refreshing[key] = true
-	s.mu.Unlock()
+	flight := &metadataFlight{done: make(chan struct{})}
+	// Recheck under the lock: another fetch may have just populated the cache.
+	if entry, ok := s.metadata[key]; ok && time.Now().Before(entry.expires) {
+		flight.body = entry.body
+		close(flight.done)
+		return flight
+	}
+	// Rapid navigation must not leave unbounded background work behind.
+	sourceFlights := 0
+	for flightKey := range s.metadataFlights {
+		if strings.HasPrefix(flightKey, source+"|") {
+			sourceFlights++
+		}
+	}
+	if sourceFlights >= 8 {
+		flight.err = errors.New("metadata requests busy")
+		close(flight.done)
+		return flight
+	}
+	s.metadataFlights[key] = flight
 	queryCopy := url.Values{}
 	for name, values := range query {
 		queryCopy[name] = append([]string(nil), values...)
 	}
 	go func() {
-		defer func() { s.mu.Lock(); delete(s.refreshing, key); s.mu.Unlock() }()
 		ctx, cancel := context.WithTimeout(context.Background(), s.feedTimeout)
 		defer cancel()
 		body, _, err := s.fetchSource(ctx, source, requestPath, queryCopy, false)
 		if err == nil {
 			s.store(key, body, 30*time.Second)
 		}
+		s.mu.Lock()
+		flight.body, flight.err = body, err
+		delete(s.metadataFlights, key)
+		close(flight.done)
+		s.mu.Unlock()
 	}()
+	return flight
+}
+
+// Navigation can use recently fetched real metadata immediately. Cold loads
+// and stale refreshes share the same per-key flight; playback is excluded.
+func (s *Server) refreshMetadata(key, source, requestPath string, query url.Values) {
+	s.startMetadata(key, source, requestPath, query)
 }
 
 func (s *Server) sourceClient(source string) (string, *http.Client, error) {

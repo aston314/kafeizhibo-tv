@@ -26,7 +26,7 @@ type Server struct {
 	playbackTimeout   time.Duration
 	mu                sync.RWMutex
 	metadata          map[string]cachedResponse
-	refreshing        map[string]bool
+	metadataFlights   map[string]*metadataFlight
 }
 
 type cachedResponse struct {

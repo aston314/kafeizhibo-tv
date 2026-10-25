@@ -17,6 +17,9 @@ var js []byte
 //go:embed feed-pager.js
 var feedPager []byte
 
+//go:embed feed-request.js
+var feedRequest []byte
+
 //go:embed assets/support-wechat.png
 var supportWechat []byte
 
@@ -36,6 +39,8 @@ func Asset(name string) (AssetData, bool) {
 		return AssetData{js, "application/javascript; charset=utf-8"}, true
 	case "feed-pager.js":
 		return AssetData{feedPager, "application/javascript; charset=utf-8"}, true
+	case "feed-request.js":
+		return AssetData{feedRequest, "application/javascript; charset=utf-8"}, true
 	case "support-wechat.png":
 		return AssetData{supportWechat, "image/png"}, true
 	case "support-alipay.png":

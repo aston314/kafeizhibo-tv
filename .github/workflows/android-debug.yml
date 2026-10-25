@@ -39,7 +39,8 @@ jobs:
           go test -race ./...
           node --check ui/app.js
           node --check ui/feed-pager.js
-          node --test tests/feed-pager.test.cjs
+          node --check ui/feed-request.js
+          node --test tests/*.test.cjs
 
       - name: Build Go cores for Android ABIs
         env:

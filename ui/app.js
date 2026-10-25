@@ -30,19 +30,28 @@
   }, { root: mainArea, rootMargin: '0px 0px 280px 0px', threshold: 0 }) : null;
 
   function escapeHTML(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]; }); }
-  function api(path, callback) {
-    var xhr = new XMLHttpRequest(); var finished = false; xhr.open('GET', path, true); xhr.timeout = 45000;
+  function api(path, callback, timeout) {
+    var xhr = new XMLHttpRequest(); var finished = false; xhr.open('GET', path, true); xhr.timeout = timeout || 45000;
     function finish(error, value) { if (finished) return; finished = true; callback(error, value); }
+    function failure(message, status, retryable) { var error = new Error(message); error.status = status; error.retryable = !!retryable; return error; }
     xhr.onreadystatechange = function () {
       if (xhr.readyState !== 4) return;
-      if (xhr.status >= 200 && xhr.status < 300) { try { finish(null, JSON.parse(xhr.responseText)); } catch (e) { finish(e); } }
+      // Status 0 is also emitted before timeout/abort. Let the specific event
+      // classify it so a slow upstream is not mistaken for a dead local core.
+      if (xhr.status === 0) return;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        var value; try { value = JSON.parse(xhr.responseText); } catch (e) { finish(failure('响应格式无效', xhr.status, true)); return; }
+        finish(null, value);
+      }
       else {
         var message = 'HTTP ' + xhr.status;
         try { var response = JSON.parse(xhr.responseText); if (response && response.message) message = response.message; } catch (ignore) {}
-        finish(new Error(message));
+        finish(failure(message, xhr.status));
       }
     };
-    xhr.ontimeout = function () { finish(new Error('请求超时')); }; xhr.onerror = function () { finish(new Error('网络连接失败')); }; xhr.send(); return xhr;
+    xhr.ontimeout = function () { finish(failure('请求超时', 408)); }; xhr.onerror = function () { finish(failure('网络连接失败', 0)); };
+    xhr.onabort = function () { var error = failure('请求已取消', 0); error.canceled = true; finish(error); };
+    xhr.send(); return xhr;
   }
   function setVideoPlaceholder(message, loading) {
     var placeholder = document.getElementById('video-placeholder'); if (!placeholder) return;
@@ -148,7 +157,7 @@
   }
   function rows(response) { var data = response && response.data; return Array.isArray(data) ? data : data && Array.isArray(data.list) ? data.list : data && Array.isArray(data.rows) ? data.rows : []; }
   function totalCount(response) { var value = response && response.total; if (value == null && response && response.data && !Array.isArray(response.data)) value = response.data.total; if (value == null) return null; value = Number(value); return isFinite(value) && value >= 0 ? value : null; }
-  function get(path, params, callback) { var query = []; Object.keys(params).forEach(function (key) { query.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key])); }); return api(path + (query.length ? '?' + query.join('&') : ''), callback); }
+  function get(path, params, callback, timeout) { var query = []; Object.keys(params).forEach(function (key) { query.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key])); }); return api(path + (query.length ? '?' + query.join('&') : ''), callback, timeout); }
   function imageURL(value, source) { if (!value) return ''; if (/^https?:\/\//i.test(value)) return value; var base = source === 'doubao' ? 'https://www.doubaozhibo.com' : 'https://kafeizhibo.cc'; return base + (value.charAt(0) === '/' ? value : '/' + value); }
   function text(item, key, fallback) { return item && item[key] != null ? item[key] : fallback || ''; }
   function homeTeam(item) { return text(item, 'home_team', item.homeTeam && item.homeTeam.name || '主队'); }
@@ -178,11 +187,12 @@
   }
   function normalizeMatchTitle(value) { return String(value == null ? '' : value).replace(/\s+vs\s+/gi, ' VS '); }
   function cardsFor(page, category, pageNumber, done, cursor, source) {
-    return get('/api/v2/feed', { view: page, source: source || state.source, category: category, page: pageNumber, size: PAGE_SIZE, cursor: cursor || '' }, function (err, result) {
+    var params = { view: page, source: source || state.source, category: category, page: pageNumber, size: PAGE_SIZE, cursor: cursor || '' };
+    return window.TVFeedRequest.start({ request: function (complete, timeout) { return get('/api/v2/feed', params, complete, timeout); }, done: function (err, result) {
       if (err) return done(err);
       var data = result && result.data || {};
       done(null, { items: Array.isArray(data.items) ? data.items : [], total: data.total == null ? null : Number(data.total), hasMore: !!data.hasMore, nextCursor: data.nextCursor || '', sources: result.sources || {} });
-    });
+    } });
   }
   function renderState(title, message, retry) { content.innerHTML = '<div class="state-panel">' + (title === '正在加载' ? '<div class="state-spinner" role="progressbar" aria-label="正在加载"></div>' : '') + '<div class="state-title">' + escapeHTML(title) + '</div><div>' + escapeHTML(message) + '</div>' + (retry ? '<button class="retry-button focusable" data-action="retry" data-focus="retry">重试</button>' : '') + '</div>'; if (retry) { var button = content.querySelector('[data-action="retry"]'); button.addEventListener('click', function () { loadPage(); }); focusById('retry'); } }
   function renderCoreError(message) {
